@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from metrics.dtaf1 import dtaf1, dtaf1_road_building
 from metrics.cldice import cldice
 from metrics.boundary_f1 import boundary_f1, iou
+from metrics.point_f1 import point_f1
 from metrics.unified import cbhm, evaluate_all
 
 
@@ -51,13 +52,40 @@ def make_combined(road_mask, building_mask):
     return out
 
 
+def make_points(shape=(64, 64), coords=((10, 10), (10, 30), (40, 15), (50, 50)), radius=1):
+    """Small square blobs (class 3) centred at the given (row, col) coords."""
+    m = np.zeros(shape, dtype=np.uint8)
+    for r, c in coords:
+        m[max(0, r - radius): r + radius + 1, max(0, c - radius): c + radius + 1] = 3
+    return m
+
+
+def make_combined3(road_mask, building_mask, point_mask):
+    """Merge road (1), building (2) and point (3) into one label map."""
+    out = make_combined(road_mask, building_mask)
+    out[point_mask > 0] = 3
+    return out
+
+
 ROAD = make_road()
 BUILDING = make_building()
 GT = make_combined(ROAD, BUILDING)
 
+POINTS = make_points()
+GT3 = make_combined3(ROAD, BUILDING, POINTS)
+
 ROAD_CONFIG = {
     1: {"name": "road",     "tolerance": 10},
     2: {"name": "building", "tolerance":  2},
+}
+
+# Demonstrates that dtaf1() needs zero code changes to score a 3rd (point)
+# class -- it's already class-agnostic, so a point class is just another
+# entry in class_config.
+ROAD_CONFIG3 = {
+    1: {"name": "road",     "tolerance": 10},
+    2: {"name": "building", "tolerance":  2},
+    3: {"name": "point",    "tolerance":  3},
 }
 
 
@@ -90,6 +118,11 @@ class TestPerfectPrediction:
         building_bin = (BUILDING == 2).astype(np.uint8)
         assert iou(building_bin, building_bin) == pytest.approx(1.0), \
             "IoU should be 1.0 when pred == GT"
+
+    def test_point_f1_perfect(self):
+        result = point_f1(POINTS, POINTS, tolerance=3)
+        assert result["point_f1"] == pytest.approx(1.0), \
+            "point_f1 should be 1.0 when pred == GT"
 
 
 # ---------------------------------------------------------------------------
@@ -127,6 +160,12 @@ class TestNullPrediction:
         assert iou(null, building_gt) == pytest.approx(0.0), \
             "IoU should be 0.0 for null prediction"
 
+    def test_point_f1_null(self):
+        null = np.zeros_like(POINTS)
+        result = point_f1(null, POINTS, tolerance=3)
+        assert result["point_f1"] == pytest.approx(0.0), \
+            "point_f1 should be 0.0 for null prediction"
+
 
 # ---------------------------------------------------------------------------
 # 3. Both GT and pred are empty → score == 1.0 (vacuously correct)
@@ -146,6 +185,11 @@ class TestBothEmpty:
     def test_iou_both_empty(self):
         empty = np.zeros((32, 32), dtype=np.uint8)
         assert iou(empty, empty) == pytest.approx(1.0)
+
+    def test_point_f1_both_empty(self):
+        empty = np.zeros((32, 32), dtype=np.uint8)
+        result = point_f1(empty, empty, tolerance=3)
+        assert result["point_f1"] == pytest.approx(1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +240,33 @@ class TestClassIsolation:
             "BF should be 0 when building is missing"
         assert result["cbhm"] == pytest.approx(0.0), \
             "CBHM harmonic mean collapses to 0 when either component is 0"
+
+    def test_perfect_points_wrong_road_building(self):
+        # Correct points, road and building both missing entirely. Demonstrates
+        # that dtaf1() scores a 3rd (point) class with zero code changes -- it's
+        # already class-agnostic, the point class is just another class_config entry.
+        pred_points_only = np.where(GT3 == 3, 3, 0).astype(np.uint8)
+        result = dtaf1(pred_points_only, GT3, ROAD_CONFIG3)
+        assert result["per_class"][3]["f1"] == pytest.approx(1.0), \
+            "Point F1 (via dtaf1) should be 1.0 when points are correct"
+        assert result["per_class"][1]["f1"] == pytest.approx(0.0), \
+            "Road F1 should be 0.0 when road is missing"
+        assert result["per_class"][2]["f1"] == pytest.approx(0.0), \
+            "Building F1 should be 0.0 when building is missing"
+        assert result["dtaf1"] < 1.0, \
+            "Unified score should be <1 when two of three classes fail"
+
+    def test_missing_points_others_perfect(self):
+        pred_no_points = np.where(GT3 == 3, 0, GT3)
+        result = dtaf1(pred_no_points, GT3, ROAD_CONFIG3)
+        assert result["per_class"][3]["f1"] == pytest.approx(0.0), \
+            "Point F1 (via dtaf1) should be 0.0 when points are missing"
+        assert result["per_class"][1]["f1"] == pytest.approx(1.0), \
+            "Road F1 should be 1.0 when road is correct"
+        assert result["per_class"][2]["f1"] == pytest.approx(1.0, abs=0.05), \
+            "Building F1 should be ~1 when building is correct"
+        assert result["dtaf1"] < 1.0, \
+            "Unified score should be <1 when a class fails"
 
 
 # ---------------------------------------------------------------------------
@@ -309,3 +380,77 @@ class TestMonotonicity:
             assert scores[i] >= scores[i + 1], (
                 f"DTAF1 not monotonically decreasing: scores={scores}"
             )
+
+
+# ---------------------------------------------------------------------------
+# 9. Point positional jitter — small jitter within tolerance should not be
+#    penalised, large jitter beyond tolerance should collapse the score.
+#    Mirrors TestRoadOffsetTolerance for the point_f1 metric.
+# ---------------------------------------------------------------------------
+
+class TestPointPositionalJitter:
+    SHAPE = (100, 100)
+
+    def test_small_jitter_within_tolerance_stays_high(self):
+        gt_points = make_points(shape=self.SHAPE, coords=((20, 20), (20, 60), (60, 40)))
+        pred_points = make_points(shape=self.SHAPE, coords=((22, 21), (18, 62), (61, 38)))
+        result = point_f1(pred_points, gt_points, tolerance=5)
+        assert result["point_f1"] == pytest.approx(1.0), \
+            f"point_f1={result['point_f1']:.3f} expected 1.0 for jitter within tolerance"
+
+    def test_large_jitter_beyond_tolerance_drops(self):
+        gt_points = make_points(shape=self.SHAPE, coords=((20, 20), (20, 60), (60, 40)))
+        # Shift every point 25px down-row -- well beyond the 5px tolerance,
+        # and far enough from the other GT points to avoid accidental matches.
+        pred_points = make_points(shape=self.SHAPE, coords=((45, 20), (45, 60), (85, 40)))
+        result = point_f1(pred_points, gt_points, tolerance=5)
+        assert result["point_f1"] < 0.3, \
+            f"point_f1={result['point_f1']:.3f} expected low when jitter >> tolerance"
+
+
+# ---------------------------------------------------------------------------
+# 10. Point instance matching — one-to-one Hungarian assignment
+#     Verifies the metric doesn't double-count clustered points, and that it
+#     finds the globally optimal assignment rather than a greedy one.
+# ---------------------------------------------------------------------------
+
+class TestPointInstanceMatching:
+    def test_two_close_gt_points_one_pred_blob_matches_only_one(self):
+        # Two GT points 4px apart; only one predicted blob, roughly between them
+        # and within tolerance of both. A correct one-to-one matcher can only
+        # use that single predicted blob once.
+        shape = (64, 64)
+        gt_points = make_points(shape=shape, coords=((30, 30), (30, 34)))
+        pred_points = make_points(shape=shape, coords=((30, 32),))
+        result = point_f1(pred_points, gt_points, tolerance=5)
+        assert result["tp"] == 1, f"Expected exactly 1 match, got tp={result['tp']}"
+        assert result["fn"] == 1, f"Expected 1 unmatched GT point, got fn={result['fn']}"
+        assert result["fp"] == 0, f"Expected 0 unmatched predictions, got fp={result['fp']}"
+
+    def test_hungarian_finds_globally_optimal_assignment(self):
+        """
+        Configuration where naive greedy nearest-neighbor matching (each GT
+        point, processed in order, greedily claims its own nearest predicted
+        point) leaves one point unmatched, while the globally optimal
+        (Hungarian) assignment matches both.
+
+        Coordinates (same row, column shown): P0=32, G1=31, G0=33, P1=36
+            dist(G0,P0)=1   dist(G0,P1)=3
+            dist(G1,P0)=1   dist(G1,P1)=5
+
+        With tolerance=4: greedy processing G0 first claims its nearest pred,
+        P0 (dist 1) -- leaving G1 stuck with P1 at distance 5, over tolerance,
+        so greedy matches only 1. The optimal assignment (G0-P1 @ dist 3,
+        G1-P0 @ dist 1) matches both, since both distances are within
+        tolerance -- this is what point_f1's Hungarian assignment should find.
+        """
+        shape = (64, 64)
+        gt_points = make_points(shape=shape, coords=((32, 33), (32, 31)), radius=0)
+        pred_points = make_points(shape=shape, coords=((32, 32), (32, 36)), radius=0)
+        result = point_f1(pred_points, gt_points, tolerance=4)
+        assert result["tp"] == 2, (
+            f"Expected the optimal assignment to match both points (tp=2), "
+            f"got tp={result['tp']} -- greedy nearest-neighbor would only get 1"
+        )
+        assert result["fp"] == 0
+        assert result["fn"] == 0

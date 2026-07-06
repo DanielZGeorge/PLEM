@@ -19,6 +19,7 @@ import numpy as np
 
 from metrics.cldice import mean_cldice, cldice_multiclass
 from metrics.boundary_f1 import mean_boundary_f1, boundary_f1_multiclass
+from metrics.point_f1 import point_f1_multiclass
 from metrics.dtaf1 import dtaf1, dtaf1_road_building  # re-export
 
 
@@ -80,8 +81,10 @@ def evaluate_all(
     gt: np.ndarray,
     linear_classes: list = None,
     polygon_classes: list = None,
+    point_classes: list = None,
     dtaf1_config: dict = None,
     building_tolerance: float = 2.0,
+    point_tolerance: float = 5.0,
 ) -> dict:
     """
     Run all metrics and return a consolidated report.
@@ -94,12 +97,27 @@ def evaluate_all(
     gt                : H×W integer label map
     linear_classes    : class IDs for linear features  (default: [1])
     polygon_classes   : class IDs for polygonal features (default: [2])
-    dtaf1_config      : class_config dict for dtaf1(); uses road/building defaults
+    point_classes     : class IDs for point features (e.g. trees, manholes).
+                        Optional — omitted entirely from the report unless given.
+    dtaf1_config      : class_config dict for dtaf1(); uses road/building defaults.
+                        Note: dtaf1() is class-agnostic and already supports a
+                        point class today with zero code changes — just add e.g.
+                        {3: {"name": "point", "tolerance": d}} to this config
+                        yourself if you want DTAF1's macro average to include it.
+                        This is not done automatically, so existing 2-class DTAF1
+                        results stay comparable when point_classes is passed.
     building_tolerance: positional tolerance (px) for BF score
+    point_tolerance   : centroid-matching tolerance (px) for point_f1
 
     Returns
     -------
-    dict with keys: "cbhm", "dtaf1", "cldice_mean", "bf_mean", "per_class_detail"
+    dict with keys: "cbhm", "dtaf1", "cldice_mean", "bf_mean", "point_f1_mean",
+    "per_class_detail". "point_f1_mean" is reported as an independent figure
+    alongside "cbhm" — CBHM's harmonic mean stays 2-way (clDice, BF) by design,
+    since it's an intentional foil ("harmonic mean prevents either class from
+    masking poor performance in the other"); folding in an unbalanced 3rd class
+    would blur that comparison. "point_f1_mean" is None when point_classes is
+    not given.
     """
     if linear_classes is None:
         linear_classes = [1]
@@ -120,15 +138,27 @@ def evaluate_all(
     )
     dtaf1_result = dtaf1(pred, gt, dtaf1_config)
 
+    point_detail = {}
+    point_f1_mean = None
+    if point_classes:
+        point_detail = point_f1_multiclass(
+            pred, gt, point_classes, tolerance=point_tolerance
+        )
+        point_f1_mean = float(
+            np.mean([v["point_f1"] for v in point_detail.values()])
+        )
+
     return {
         "cbhm":          cbhm_result["cbhm"],
         "dtaf1":         dtaf1_result["dtaf1"],
         "cldice_mean":   cbhm_result["cldice_mean"],
         "bf_mean":       cbhm_result["bf_mean"],
+        "point_f1_mean": point_f1_mean,
         "per_class_detail": {
             "cldice":  cbhm_result["cldice_detail"],
             "bf":      cbhm_result["bf_detail"],
             "dtaf1":   dtaf1_result["per_class"],
+            "point":   point_detail,
         },
     }
 

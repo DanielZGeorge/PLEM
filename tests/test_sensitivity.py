@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from metrics.dtaf1 import dtaf1
 from metrics.cldice import cldice
 from metrics.boundary_f1 import boundary_f1, iou
+from metrics.point_f1 import point_f1
 from metrics.unified import cbhm
 
 
@@ -55,12 +56,28 @@ def make_gt(shape=SHAPE):
     return gt
 
 
+def make_points(coords, shape=SHAPE, radius=1):
+    """Small square blobs at the given (row, col) coords -- a scattered point scene."""
+    m = np.zeros(shape, dtype=np.uint8)
+    for r, c in coords:
+        m[max(0, r - radius): r + radius + 1, max(0, c - radius): c + radius + 1] = 1
+    return m
+
+
 ROAD_CONFIG = {
     1: {"name": "road",     "tolerance": 10},
     2: {"name": "building", "tolerance":  2},
 }
 
 GT = make_gt()
+
+# Independent scattered-points scene (not tied to the road/building GT above),
+# with margin kept from the canvas edge so jitter/clutter sweeps don't clip.
+POINT_COORDS = [
+    (20, 20), (20, 60), (60, 20), (60, 60), (40, 40),
+    (10, 100), (100, 10), (100, 100), (110, 20), (30, 110),
+]
+GT_POINTS = make_points(POINT_COORDS)
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +100,13 @@ def _score(pred: np.ndarray, gt: np.ndarray) -> dict:
         "cldice":     cl_r["cldice"],
         "bf":         bf_r["bf"],
     }
+
+
+def _point_score(pred_points: np.ndarray, gt_points: np.ndarray, tolerance: float = 5.0) -> dict:
+    """Separate from _score() -- point scenes are independent of the road/building GT
+    the other sweeps depend on, so this doesn't touch their existing numeric behavior."""
+    r = point_f1(pred_points, gt_points, tolerance=tolerance)
+    return {"point_f1": r["point_f1"], "precision": r["precision"], "recall": r["recall"]}
 
 
 # ---------------------------------------------------------------------------
@@ -246,6 +270,97 @@ def sweep_class_imbalance(road_lengths=None) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Experiment 6: Point positional jitter sweep
+# ---------------------------------------------------------------------------
+
+def sweep_point_jitter(offsets=None) -> dict:
+    """
+    Shift every predicted point horizontally by 0…N pixels.
+    Demonstrates that point_f1 tolerates small jitter and collapses once the
+    shift exceeds the tolerance radius.
+    """
+    if offsets is None:
+        offsets = list(range(0, 21, 2))
+
+    results = {k: [] for k in ["offset", "point_f1", "precision", "recall"]}
+    for offset in offsets:
+        pred_coords = [(r, c + offset) for r, c in POINT_COORDS]
+        pred_points = make_points(pred_coords)
+
+        s = _point_score(pred_points, GT_POINTS, tolerance=5.0)
+        results["offset"].append(offset)
+        results["point_f1"].append(s["point_f1"])
+        results["precision"].append(s["precision"])
+        results["recall"].append(s["recall"])
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Experiment 7: Point dropout sweep (missed detections)
+# ---------------------------------------------------------------------------
+
+def sweep_point_dropout(fractions=None, seed=42) -> dict:
+    """
+    Randomly drop 0…100% of predicted points (simulate missed detections).
+    Recall should fall roughly linearly; precision should stay high since the
+    remaining predictions are still correct.
+    """
+    if fractions is None:
+        fractions = [i / 10 for i in range(11)]
+
+    rng = np.random.default_rng(seed)
+    n_points = len(POINT_COORDS)
+    results = {k: [] for k in ["fraction", "point_f1", "precision", "recall"]}
+
+    for frac in fractions:
+        n_keep = max(0, int(round(n_points * (1 - frac))))
+        keep_idx = rng.choice(n_points, n_keep, replace=False) if n_keep > 0 else []
+        pred_coords = [POINT_COORDS[i] for i in keep_idx]
+        pred_points = make_points(pred_coords)
+
+        s = _point_score(pred_points, GT_POINTS, tolerance=5.0)
+        results["fraction"].append(frac)
+        results["point_f1"].append(s["point_f1"])
+        results["precision"].append(s["precision"])
+        results["recall"].append(s["recall"])
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Experiment 8: Point clutter sweep (spurious false positives)
+# ---------------------------------------------------------------------------
+
+def sweep_point_clutter(n_extra=None, seed=7) -> dict:
+    """
+    Add an increasing number of spurious predicted points scattered randomly
+    across the canvas, on top of the correct predictions. Precision should
+    fall roughly linearly; recall should stay at 1.0 since every GT point is
+    still correctly predicted.
+    """
+    if n_extra is None:
+        n_extra = list(range(0, 21, 2))
+
+    rng = np.random.default_rng(seed)
+    results = {k: [] for k in ["n_extra", "point_f1", "precision", "recall"]}
+
+    for n in n_extra:
+        pred_coords = list(POINT_COORDS)
+        extra_rc = rng.integers(0, SHAPE[0], size=(n, 2))
+        pred_coords += [tuple(rc) for rc in extra_rc]
+        pred_points = make_points(pred_coords)
+
+        s = _point_score(pred_points, GT_POINTS, tolerance=5.0)
+        results["n_extra"].append(n)
+        results["point_f1"].append(s["point_f1"])
+        results["precision"].append(s["precision"])
+        results["recall"].append(s["recall"])
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Optional plotting
 # ---------------------------------------------------------------------------
 
@@ -320,6 +435,51 @@ def plot_all(save_dir: str = "."):
     fig.savefig(os.path.join(save_dir, "sweep_road_thickness.png"), dpi=150)
     plt.close(fig)
 
+    # --- Experiment 6: point jitter ---
+    r6 = sweep_point_jitter()
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(r6["offset"], r6["precision"], "r--", label="Precision")
+    ax.plot(r6["offset"], r6["recall"],    "b--", label="Recall")
+    ax.plot(r6["offset"], r6["point_f1"],  "g-",  label="point_f1 (tol=5px)")
+    ax.set_xlabel("Point jitter (pixels)")
+    ax.set_ylabel("Score")
+    ax.set_title("Point jitter sweep\n(tolerant within tolerance radius, collapses beyond it)")
+    ax.legend()
+    ax.set_ylim(0, 1.05)
+    fig.tight_layout()
+    fig.savefig(os.path.join(save_dir, "sweep_point_jitter.png"), dpi=150)
+    plt.close(fig)
+
+    # --- Experiment 7: point dropout ---
+    r7 = sweep_point_dropout()
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(r7["fraction"], r7["precision"], "r--", label="Precision")
+    ax.plot(r7["fraction"], r7["recall"],    "b--", label="Recall")
+    ax.plot(r7["fraction"], r7["point_f1"],  "g-",  label="point_f1")
+    ax.set_xlabel("Fraction of predicted points dropped")
+    ax.set_ylabel("Score")
+    ax.set_title("Point dropout sweep (missed detections)")
+    ax.legend()
+    ax.set_ylim(0, 1.05)
+    fig.tight_layout()
+    fig.savefig(os.path.join(save_dir, "sweep_point_dropout.png"), dpi=150)
+    plt.close(fig)
+
+    # --- Experiment 8: point clutter ---
+    r8 = sweep_point_clutter()
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(r8["n_extra"], r8["precision"], "r--", label="Precision")
+    ax.plot(r8["n_extra"], r8["recall"],    "b--", label="Recall")
+    ax.plot(r8["n_extra"], r8["point_f1"],  "g-",  label="point_f1")
+    ax.set_xlabel("Number of spurious predicted points")
+    ax.set_ylabel("Score")
+    ax.set_title("Point clutter sweep (false positives)")
+    ax.legend()
+    ax.set_ylim(0, 1.05)
+    fig.tight_layout()
+    fig.savefig(os.path.join(save_dir, "sweep_point_clutter.png"), dpi=150)
+    plt.close(fig)
+
     print(f"Figures saved to {save_dir}/")
 
 
@@ -351,6 +511,9 @@ if __name__ == "__main__":
     print_table("Building erosion sweep", sweep_building_erosion())
     print_table("Road thickness sweep",  sweep_road_thickness())
     print_table("Class imbalance sweep", sweep_class_imbalance())
+    print_table("Point jitter sweep",    sweep_point_jitter())
+    print_table("Point dropout sweep",   sweep_point_dropout())
+    print_table("Point clutter sweep",   sweep_point_clutter())
 
     if args.plot:
         plot_all(save_dir=args.plot_dir)
