@@ -13,8 +13,8 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from metrics.dtaf1 import dtaf1, dtaf1_road_building
-from metrics.cldice import cldice
-from metrics.boundary_f1 import boundary_f1, iou
+from metrics.cldice import cldice, mean_cldice
+from metrics.boundary_f1 import boundary_f1, iou, mean_boundary_f1
 from metrics.point_f1 import point_f1
 from metrics.unified import cbhm, evaluate_all
 
@@ -232,6 +232,12 @@ class TestClassIsolation:
             "clDice should be 0 when road is missing"
         assert result["cbhm"] == pytest.approx(0.0), \
             "CBHM harmonic mean collapses to 0 when either component is 0"
+        # cbhm_soft is the lenient, area-weighted companion: building (400px)
+        # dominates road (128px) in this fixture, so a fully-missing road should
+        # still leave meaningful credit for the correctly-predicted building,
+        # instead of collapsing to 0 like the harsh harmonic mean does.
+        assert result["cbhm_soft"] > 0.5, \
+            "cbhm_soft should not collapse to 0 when the dominant class is correct"
 
     def test_cbhm_penalises_missing_building(self):
         pred_no_building = np.where(GT == 2, 0, GT)
@@ -240,6 +246,11 @@ class TestClassIsolation:
             "BF should be 0 when building is missing"
         assert result["cbhm"] == pytest.approx(0.0), \
             "CBHM harmonic mean collapses to 0 when either component is 0"
+        # Road (128px) is the minority class here, so cbhm_soft still gives it
+        # partial credit -- exactly its area weight, since the road prediction
+        # is perfect (weight 1.0) and building contributes 0.
+        assert result["cbhm_soft"] == pytest.approx(result["type_weights"]["linear"]), \
+            "cbhm_soft should not collapse to 0 when the minority class is correct"
 
     def test_perfect_points_wrong_road_building(self):
         # Correct points, road and building both missing entirely. Demonstrates
@@ -454,3 +465,124 @@ class TestPointInstanceMatching:
         )
         assert result["fp"] == 0
         assert result["fn"] == 0
+
+
+# ---------------------------------------------------------------------------
+# 11. Area-weighted reduction — a class covering more GT pixels should pull
+#     the weighted mean/DTAF1 toward its own score, while the unweighted
+#     ("macro") variant stays agnostic to class size.
+# ---------------------------------------------------------------------------
+
+class TestAreaWeighting:
+    SHAPE = (64, 64)
+
+    def _two_road_classes(self, big_wrong=False):
+        """Class 1: a large road region (correct). Class 4: a tiny road stub.
+
+        If big_wrong, class 1's prediction is wrong (score 0) instead, so the
+        big/small roles swap between which class is correct.
+        """
+        gt = np.zeros(self.SHAPE, dtype=np.uint8)
+        gt[:, 10:14] = 1          # big: 64 rows x 4px = 256px
+        gt[30:32, 50:52] = 4      # small: 2x2 = 4px
+
+        pred = gt.copy()
+        if big_wrong:
+            pred = np.where(gt == 1, 0, pred)   # big class entirely missing
+        else:
+            pred = np.where(gt == 4, 0, pred)   # small class entirely missing
+        return pred, gt
+
+    def test_dtaf1_weighted_favors_dominant_class_when_it_is_correct(self):
+        cfg = {1: {"name": "big_road", "tolerance": 3}, 4: {"name": "small_road", "tolerance": 3}}
+        pred, gt = self._two_road_classes(big_wrong=False)  # big correct, small missing
+        result = dtaf1(pred, gt, cfg)
+        assert result["dtaf1_weighted"] > result["dtaf1_macro"], (
+            "Weighted DTAF1 should lean toward the large (correct) class's score, "
+            f"got weighted={result['dtaf1_weighted']:.3f} macro={result['dtaf1_macro']:.3f}"
+        )
+
+    def test_dtaf1_weighted_favors_dominant_class_when_it_is_wrong(self):
+        cfg = {1: {"name": "big_road", "tolerance": 3}, 4: {"name": "small_road", "tolerance": 3}}
+        pred, gt = self._two_road_classes(big_wrong=True)  # big missing, small correct
+        result = dtaf1(pred, gt, cfg)
+        assert result["dtaf1_weighted"] < result["dtaf1_macro"], (
+            "Weighted DTAF1 should lean toward the large (wrong) class's score, "
+            f"got weighted={result['dtaf1_weighted']:.3f} macro={result['dtaf1_macro']:.3f}"
+        )
+
+    def test_mean_cldice_weighted_matches_dtaf1_direction(self):
+        pred, gt = self._two_road_classes(big_wrong=False)
+        macro = mean_cldice(pred, gt, linear_classes=[1, 4], reduction="macro")
+        weighted = mean_cldice(pred, gt, linear_classes=[1, 4], reduction="weighted")
+        assert weighted > macro, (
+            f"weighted clDice={weighted:.3f} should exceed macro={macro:.3f} "
+            "when the large class is the correct one"
+        )
+
+    def test_mean_boundary_f1_weighted_matches_direction(self):
+        gt = np.zeros(self.SHAPE, dtype=np.uint8)
+        gt[5:35, 5:35] = 2    # big building: 30x30 = 900px
+        gt[50:52, 50:52] = 5  # small building: 2x2 = 4px
+        pred = np.where(gt == 5, 0, gt)  # small building missing, big correct
+
+        macro = mean_boundary_f1(pred, gt, polygon_classes=[2, 5], tolerance=2, reduction="macro")
+        weighted = mean_boundary_f1(pred, gt, polygon_classes=[2, 5], tolerance=2, reduction="weighted")
+        assert weighted > macro, (
+            f"weighted BF={weighted:.3f} should exceed macro={macro:.3f} "
+            "when the large class is the correct one"
+        )
+
+    def test_unknown_reduction_raises(self):
+        with pytest.raises(ValueError):
+            dtaf1(GT, GT, ROAD_CONFIG, reduction="bogus")
+        with pytest.raises(ValueError):
+            mean_cldice(GT, GT, linear_classes=[1], reduction="bogus")
+        with pytest.raises(ValueError):
+            mean_boundary_f1(GT, GT, polygon_classes=[2], reduction="bogus")
+
+
+# ---------------------------------------------------------------------------
+# 12. Sparse-class collapse — reproduces the real-data failure mode found in
+#     notebooks/composite_vs_submetric_report.ipynb (Khartoum_img371): a
+#     sparse linear feature offset beyond tolerance collapses clDice's
+#     skeleton-based score to exactly 0, which then collapses CBHM's harmonic
+#     mean to 0 even though most pixels are still roughly right. cbhm_soft and
+#     dtaf1_weighted should both degrade gracefully instead.
+# ---------------------------------------------------------------------------
+
+class TestSparseClassCollapse:
+    SHAPE = (128, 128)
+
+    def _sparse_scene(self, offset):
+        # Road stub lives in rows 3:7, entirely outside the building's row
+        # range (10:110), so shifting it horizontally never overlaps the
+        # building regardless of `offset`.
+        gt = np.zeros(self.SHAPE, dtype=np.uint8)
+        gt[3:7, 3:4] = 1               # a handful of road pixels (~0.02% of image)
+        gt[10:110, 10:110] = 2         # large, dominant building block
+
+        pred = np.zeros(self.SHAPE, dtype=np.uint8)
+        pred[3:7, 3 + offset:4 + offset] = 1  # road shifted out of tolerance
+        pred[10:110, 10:110] = 2              # building stays perfect
+
+        return pred, gt
+
+    def test_sparse_road_offset_collapses_cbhm_but_not_cbhm_soft(self):
+        pred, gt = self._sparse_scene(offset=15)  # >> the 10px tolerance used below
+        cbhm_result = cbhm(pred, gt, linear_classes=[1], polygon_classes=[2])
+        assert cbhm_result["cldice_mean"] == pytest.approx(0.0), \
+            "Sparse road skeleton shifted out of GT region should collapse clDice to 0"
+        assert cbhm_result["cbhm"] == pytest.approx(0.0), \
+            "Harsh CBHM harmonic mean should still collapse to 0 (unchanged behavior)"
+        assert cbhm_result["cbhm_soft"] > 0.9, (
+            "cbhm_soft should stay high: the dominant building class is still "
+            f"perfect, got cbhm_soft={cbhm_result['cbhm_soft']:.3f}"
+        )
+
+        dtaf1_cfg = {1: {"name": "road", "tolerance": 10}, 2: {"name": "building", "tolerance": 2}}
+        dtaf1_result = dtaf1(pred, gt, dtaf1_cfg)
+        assert dtaf1_result["dtaf1_weighted"] > 0.9, (
+            "dtaf1_weighted should also stay high, dominated by the correct building class, "
+            f"got {dtaf1_result['dtaf1_weighted']:.3f}"
+        )

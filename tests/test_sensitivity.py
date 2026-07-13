@@ -93,12 +93,14 @@ def _score(pred: np.ndarray, gt: np.ndarray) -> dict:
     cbhm_r = cbhm(pred, gt, linear_classes=[1], polygon_classes=[2])
 
     return {
-        "dtaf1":      dtaf1_r["dtaf1"],
-        "cbhm":       cbhm_r["cbhm"],
-        "road_iou":   road_iou,
-        "bld_iou":    bld_iou,
-        "cldice":     cl_r["cldice"],
-        "bf":         bf_r["bf"],
+        "dtaf1":          dtaf1_r["dtaf1"],
+        "dtaf1_weighted": dtaf1_r["dtaf1_weighted"],
+        "cbhm":           cbhm_r["cbhm"],
+        "cbhm_soft":      cbhm_r["cbhm_soft"],
+        "road_iou":       road_iou,
+        "bld_iou":        bld_iou,
+        "cldice":         cl_r["cldice"],
+        "bf":             bf_r["bf"],
     }
 
 
@@ -246,25 +248,75 @@ def sweep_road_thickness(thicknesses=None) -> dict:
 
 def sweep_class_imbalance(road_lengths=None) -> dict:
     """
-    Vary how much of the image is road vs building.
-    Checks that neither class dominates the unified score.
+    Vary how much of the image is road vs building, with an *imperfect* road
+    prediction (road entirely missing) at every ratio. With a perfect
+    prediction the averaging logic is never exercised (every score is 1.0
+    regardless of imbalance) -- this sweep instead shows how the harsh,
+    unweighted "cbhm"/"dtaf1" (macro) and the lenient, area-weighted
+    "cbhm_soft"/"dtaf1_weighted" diverge as the road's pixel share shrinks:
+    the weighted variants should recover toward 1.0 as road_frac -> 0 (since
+    the correct, dominant building class should count for more), while the
+    unweighted variants stay flat regardless of road_frac.
     """
     if road_lengths is None:
         road_lengths = [16, 32, 64, 96, 128]
 
-    results = {k: [] for k in ["road_frac", "dtaf1", "cbhm"]}
+    results = {k: [] for k in ["road_frac", "dtaf1", "dtaf1_weighted", "cbhm", "cbhm_soft"]}
 
     for length in road_lengths:
         gt = np.zeros(SHAPE, dtype=np.uint8)
         gt[:length, 62:66] = 1   # partial road
         gt[20:60, 20:60] = 2     # constant building
 
-        pred = gt.copy()  # perfect pred; just checking score isn't class-dominated
+        pred = gt.copy()
+        pred[pred == 1] = 0      # road entirely missing; building stays perfect
+
         s = _score(pred, gt)
         road_frac = (gt == 1).mean()
         results["road_frac"].append(float(road_frac))
         results["dtaf1"].append(s["dtaf1"])
+        results["dtaf1_weighted"].append(s["dtaf1_weighted"])
         results["cbhm"].append(s["cbhm"])
+        results["cbhm_soft"].append(s["cbhm_soft"])
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Experiment 5b: Sparse-class offset sweep
+# ---------------------------------------------------------------------------
+
+def sweep_sparse_class_offset(offsets=None) -> dict:
+    """
+    Mirrors the real-data failure found in
+    notebooks/composite_vs_submetric_report.ipynb (Khartoum_img371): a very
+    sparse road (~0.02% of the image) alongside a large, dominant building,
+    with the road progressively offset. Once the offset exceeds clDice's
+    effective tolerance the skeleton comparison collapses to exactly 0, which
+    collapses the harsh "cbhm" harmonic mean to 0 even though the dominant
+    building class is still perfect. "cbhm_soft"/"dtaf1_weighted" should
+    degrade far more gracefully, staying high throughout.
+    """
+    if offsets is None:
+        offsets = list(range(0, 21, 2))
+
+    gt = np.zeros(SHAPE, dtype=np.uint8)
+    gt[3:7, 3:4] = 1            # sparse road stub, outside the building's rows
+    gt[10:110, 10:110] = 2      # large, dominant building
+
+    results = {k: [] for k in ["offset", "dtaf1", "dtaf1_weighted", "cbhm", "cbhm_soft"]}
+
+    for offset in offsets:
+        pred = np.zeros(SHAPE, dtype=np.uint8)
+        pred[3:7, 3 + offset:4 + offset] = 1
+        pred[10:110, 10:110] = 2
+
+        s = _score(pred, gt)
+        results["offset"].append(offset)
+        results["dtaf1"].append(s["dtaf1"])
+        results["dtaf1_weighted"].append(s["dtaf1_weighted"])
+        results["cbhm"].append(s["cbhm"])
+        results["cbhm_soft"].append(s["cbhm_soft"])
 
     return results
 
@@ -435,6 +487,22 @@ def plot_all(save_dir: str = "."):
     fig.savefig(os.path.join(save_dir, "sweep_road_thickness.png"), dpi=150)
     plt.close(fig)
 
+    # --- Experiment 5b: sparse-class offset ---
+    r5b = sweep_sparse_class_offset()
+    fig, ax = plt.subplots(figsize=(7, 4))
+    ax.plot(r5b["offset"], r5b["cbhm"],           "r--", label="CBHM (harsh)")
+    ax.plot(r5b["offset"], r5b["cbhm_soft"],      "r-",  label="CBHM-soft (area-weighted)")
+    ax.plot(r5b["offset"], r5b["dtaf1"],          "b--", label="DTAF1 (macro)")
+    ax.plot(r5b["offset"], r5b["dtaf1_weighted"], "b-",  label="DTAF1 (weighted)")
+    ax.set_xlabel("Sparse road offset (pixels)")
+    ax.set_ylabel("Score")
+    ax.set_title("Sparse-class offset sweep\n(reproduces the Khartoum_img371 real-data CBHM collapse)")
+    ax.legend()
+    ax.set_ylim(0, 1.05)
+    fig.tight_layout()
+    fig.savefig(os.path.join(save_dir, "sweep_sparse_class_offset.png"), dpi=150)
+    plt.close(fig)
+
     # --- Experiment 6: point jitter ---
     r6 = sweep_point_jitter()
     fig, ax = plt.subplots(figsize=(7, 4))
@@ -511,6 +579,7 @@ if __name__ == "__main__":
     print_table("Building erosion sweep", sweep_building_erosion())
     print_table("Road thickness sweep",  sweep_road_thickness())
     print_table("Class imbalance sweep", sweep_class_imbalance())
+    print_table("Sparse-class offset sweep", sweep_sparse_class_offset())
     print_table("Point jitter sweep",    sweep_point_jitter())
     print_table("Point dropout sweep",   sweep_point_dropout())
     print_table("Point clutter sweep",   sweep_point_clutter())

@@ -47,11 +47,24 @@ def cbhm(
     Returns
     -------
     dict with keys:
-        "cbhm"           : scalar unified score
-        "cldice_mean"    : mean clDice across linear classes
-        "bf_mean"        : mean Boundary F1 across polygon classes
-        "cldice_detail"  : per-class clDice dicts
-        "bf_detail"      : per-class BF dicts
+        "cbhm"                 : scalar unified score — harsh, unweighted harmonic
+                                  mean of cldice_mean/bf_mean (unchanged; a single
+                                  class scoring 0 collapses this to 0 by design, see
+                                  CLAUDE.md's CBHM/DTAF1 "harsh vs lenient foil" note)
+        "cldice_mean"          : unweighted mean clDice across linear classes
+        "bf_mean"              : unweighted mean Boundary F1 across polygon classes
+        "cldice_mean_weighted" : GT-pixel-count-weighted mean clDice across linear classes
+        "bf_mean_weighted"     : GT-pixel-count-weighted mean BF across polygon classes
+        "cbhm_soft"            : lenient companion score — weighted arithmetic mean
+                                  (not harmonic/geometric, which also collapse to 0
+                                  whenever one input is 0) of cldice_mean_weighted and
+                                  bf_mean_weighted, combined using each type's share of
+                                  total GT pixels (see "type_weights"). Never collapses
+                                  to 0 unless every class is fully wrong.
+        "type_weights"         : {"linear": w_cl, "polygon": w_bf} — the cross-type
+                                  weights used to compute cbhm_soft, for transparency
+        "cldice_detail"        : per-class clDice dicts (each now also carries "n_gt")
+        "bf_detail"            : per-class BF dicts (each now also carries "n_gt")
     """
     cldice_detail = cldice_multiclass(pred, gt, linear_classes)
     bf_detail = boundary_f1_multiclass(
@@ -67,10 +80,35 @@ def cbhm(
     denom = cl_mean + bf_mean
     score = float(2 * cl_mean * bf_mean / denom) if denom > 0 else 0.0
 
+    cldice_weights = np.array([v["n_gt"] for v in cldice_detail.values()], dtype=float)
+    bf_weights = np.array([v["n_gt"] for v in bf_detail.values()], dtype=float)
+    cl_total = cldice_weights.sum()
+    bf_total = bf_weights.sum()
+
+    cl_mean_weighted = (
+        float(np.dot(cldice_weights, cldice_scores) / cl_total) if cl_total > 0 else 0.0
+    )
+    bf_mean_weighted = (
+        float(np.dot(bf_weights, bf_scores) / bf_total) if bf_total > 0 else 0.0
+    )
+
+    type_total = cl_total + bf_total
+    if type_total > 0:
+        w_cl = float(cl_total / type_total)
+        w_bf = float(bf_total / type_total)
+    else:
+        w_cl = w_bf = 0.5
+
+    cbhm_soft = w_cl * cl_mean_weighted + w_bf * bf_mean_weighted
+
     return {
         "cbhm": score,
         "cldice_mean": cl_mean,
         "bf_mean": bf_mean,
+        "cldice_mean_weighted": cl_mean_weighted,
+        "bf_mean_weighted": bf_mean_weighted,
+        "cbhm_soft": cbhm_soft,
+        "type_weights": {"linear": w_cl, "polygon": w_bf},
         "cldice_detail": cldice_detail,
         "bf_detail": bf_detail,
     }
@@ -111,13 +149,20 @@ def evaluate_all(
 
     Returns
     -------
-    dict with keys: "cbhm", "dtaf1", "cldice_mean", "bf_mean", "point_f1_mean",
-    "per_class_detail". "point_f1_mean" is reported as an independent figure
-    alongside "cbhm" — CBHM's harmonic mean stays 2-way (clDice, BF) by design,
-    since it's an intentional foil ("harmonic mean prevents either class from
-    masking poor performance in the other"); folding in an unbalanced 3rd class
-    would blur that comparison. "point_f1_mean" is None when point_classes is
-    not given.
+    dict with keys: "cbhm", "cbhm_soft", "dtaf1", "dtaf1_weighted", "cldice_mean",
+    "bf_mean", "point_f1_mean", "per_class_detail". "point_f1_mean" is reported
+    as an independent figure alongside "cbhm" — CBHM's harmonic mean stays 2-way
+    (clDice, BF) by design, since it's an intentional foil ("harmonic mean
+    prevents either class from masking poor performance in the other"); folding
+    in an unbalanced 3rd class would blur that comparison. "point_f1_mean" is
+    None when point_classes is not given.
+
+    "cbhm_soft" and "dtaf1_weighted" are additive, pixel-area-weighted companion
+    figures (see cbhm()/dtaf1() docstrings): "cbhm" and "dtaf1" themselves are
+    unchanged so existing callers/tests see identical values. "cbhm_soft" in
+    particular does not collapse to 0 when a single sparse class scores 0 (unlike
+    "cbhm"'s harmonic mean) — see CLAUDE.md's known-limitation note on sparse
+    real-data tiles.
     """
     if linear_classes is None:
         linear_classes = [1]
@@ -149,11 +194,13 @@ def evaluate_all(
         )
 
     return {
-        "cbhm":          cbhm_result["cbhm"],
-        "dtaf1":         dtaf1_result["dtaf1"],
-        "cldice_mean":   cbhm_result["cldice_mean"],
-        "bf_mean":       cbhm_result["bf_mean"],
-        "point_f1_mean": point_f1_mean,
+        "cbhm":            cbhm_result["cbhm"],
+        "cbhm_soft":       cbhm_result["cbhm_soft"],
+        "dtaf1":           dtaf1_result["dtaf1"],
+        "dtaf1_weighted":  dtaf1_result["dtaf1_weighted"],
+        "cldice_mean":     cbhm_result["cldice_mean"],
+        "bf_mean":         cbhm_result["bf_mean"],
+        "point_f1_mean":   point_f1_mean,
         "per_class_detail": {
             "cldice":  cbhm_result["cldice_detail"],
             "bf":      cbhm_result["bf_detail"],

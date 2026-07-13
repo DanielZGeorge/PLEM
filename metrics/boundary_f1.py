@@ -95,13 +95,16 @@ def boundary_f1_multiclass(
     """
     Apply BF score to selected classes in a multiclass label map.
 
-    Returns dict {class_id: boundary_f1_result_dict}.
+    Returns dict {class_id: boundary_f1_result_dict}, each result dict
+    additionally carries "n_gt" (GT pixel count for that class) for
+    pixel-area-weighted aggregation.
     """
     results = {}
     for cls in polygon_classes:
-        results[cls] = boundary_f1(
-            pred == cls, gt == cls, tolerance, boundary_thickness
-        )
+        gt_mask = (gt == cls)
+        result = boundary_f1(pred == cls, gt_mask, tolerance, boundary_thickness)
+        result["n_gt"] = int(gt_mask.sum())
+        results[cls] = result
     return results
 
 
@@ -110,11 +113,26 @@ def mean_boundary_f1(
     gt: np.ndarray,
     polygon_classes: list,
     tolerance: float = 2.0,
+    reduction: str = "macro",
 ) -> float:
-    """Macro-average BF score over the specified polygonal classes."""
+    """
+    Average BF score over the specified polygonal classes.
+
+    reduction : "macro"    — unweighted mean of per-class BF scores
+                "weighted" — weight by number of GT pixels per class
+    """
     per_class = boundary_f1_multiclass(pred, gt, polygon_classes, tolerance)
     scores = [v["bf"] for v in per_class.values()]
-    return float(np.mean(scores)) if scores else 0.0
+    if not scores:
+        return 0.0
+    if reduction == "macro":
+        return float(np.mean(scores))
+    elif reduction == "weighted":
+        weights = np.array([v["n_gt"] for v in per_class.values()], dtype=float)
+        total = weights.sum()
+        return float(np.dot(weights, scores) / total) if total > 0 else 0.0
+    else:
+        raise ValueError(f"Unknown reduction: {reduction!r}. Use 'macro' or 'weighted'.")
 
 
 def iou(pred: np.ndarray, gt: np.ndarray) -> float:

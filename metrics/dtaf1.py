@@ -93,12 +93,17 @@ def dtaf1(
              2: {"name": "building", "tolerance":  2}}
     reduction : "macro"  — unweighted mean of per-class F1 scores
                 "weighted" — weight by number of GT pixels per class
+                Selects which reduction populates the top-level "dtaf1" key;
+                both reductions are always computed and returned regardless
+                (see "dtaf1_macro" / "dtaf1_weighted" below).
 
     Returns
     -------
     dict with keys:
-        "dtaf1"        : scalar unified score
-        "per_class"    : {class_id: per-class result dict}
+        "dtaf1"          : scalar unified score, per `reduction` (backward compatible)
+        "dtaf1_macro"    : unweighted mean of per-class F1 (always present)
+        "dtaf1_weighted" : GT-pixel-count-weighted mean of per-class F1 (always present)
+        "per_class"      : {class_id: per-class result dict}
     """
     if pred.shape != gt.shape:
         raise ValueError(f"pred and gt shapes differ: {pred.shape} vs {gt.shape}")
@@ -116,16 +121,24 @@ def dtaf1(
         per_class[cls_id] = result
 
     f1_scores = [r["f1"] for r in per_class.values()]
+    macro_score = float(np.mean(f1_scores))
+    weights = np.array([r["n_gt"] for r in per_class.values()], dtype=float)
+    total = weights.sum()
+    weighted_score = float(np.dot(weights, f1_scores) / total) if total > 0 else 0.0
+
     if reduction == "macro":
-        score = float(np.mean(f1_scores))
+        score = macro_score
     elif reduction == "weighted":
-        weights = np.array([r["n_gt"] for r in per_class.values()], dtype=float)
-        total = weights.sum()
-        score = float(np.dot(weights, f1_scores) / total) if total > 0 else 0.0
+        score = weighted_score
     else:
         raise ValueError(f"Unknown reduction: {reduction!r}. Use 'macro' or 'weighted'.")
 
-    return {"dtaf1": score, "per_class": per_class}
+    return {
+        "dtaf1": score,
+        "dtaf1_macro": macro_score,
+        "dtaf1_weighted": weighted_score,
+        "per_class": per_class,
+    }
 
 
 # ---------------------------------------------------------------------------

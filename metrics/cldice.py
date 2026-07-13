@@ -78,16 +78,39 @@ def cldice_multiclass(pred: np.ndarray, gt: np.ndarray, linear_classes: list) ->
 
     Returns
     -------
-    dict  {class_id: cldice_result_dict}
+    dict  {class_id: cldice_result_dict}, each result dict additionally carries
+    "n_gt" (GT pixel count for that class) for pixel-area-weighted aggregation.
     """
     results = {}
     for cls in linear_classes:
-        results[cls] = cldice(pred == cls, gt == cls)
+        gt_mask = (gt == cls)
+        result = cldice(pred == cls, gt_mask)
+        result["n_gt"] = int(gt_mask.sum())
+        results[cls] = result
     return results
 
 
-def mean_cldice(pred: np.ndarray, gt: np.ndarray, linear_classes: list) -> float:
-    """Macro-average clDice over the specified linear classes."""
+def mean_cldice(
+    pred: np.ndarray,
+    gt: np.ndarray,
+    linear_classes: list,
+    reduction: str = "macro",
+) -> float:
+    """
+    Average clDice over the specified linear classes.
+
+    reduction : "macro"    — unweighted mean of per-class clDice scores
+                "weighted" — weight by number of GT pixels per class
+    """
     per_class = cldice_multiclass(pred, gt, linear_classes)
     scores = [v["cldice"] for v in per_class.values()]
-    return float(np.mean(scores)) if scores else 0.0
+    if not scores:
+        return 0.0
+    if reduction == "macro":
+        return float(np.mean(scores))
+    elif reduction == "weighted":
+        weights = np.array([v["n_gt"] for v in per_class.values()], dtype=float)
+        total = weights.sum()
+        return float(np.dot(weights, scores) / total) if total > 0 else 0.0
+    else:
+        raise ValueError(f"Unknown reduction: {reduction!r}. Use 'macro' or 'weighted'.")
