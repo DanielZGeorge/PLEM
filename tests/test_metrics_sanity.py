@@ -17,6 +17,8 @@ from metrics.cldice import cldice, mean_cldice
 from metrics.boundary_f1 import boundary_f1, iou, mean_boundary_f1
 from metrics.point_f1 import point_f1
 from metrics.unified import cbhm, evaluate_all
+from metrics.apls import apls
+from metrics.dtaf1_topo import dtaf1_topo
 
 
 # ---------------------------------------------------------------------------
@@ -586,3 +588,110 @@ class TestSparseClassCollapse:
             "dtaf1_weighted should also stay high, dominated by the correct building class, "
             f"got {dtaf1_result['dtaf1_weighted']:.3f}"
         )
+
+
+# ---------------------------------------------------------------------------
+# 13. APLS — raster-skeleton connectivity primitive (metrics/apls.py)
+# ---------------------------------------------------------------------------
+
+class TestAPLS:
+    def test_perfect_prediction(self):
+        result = apls(ROAD, ROAD, tolerance=10)
+        assert result["apls"] == pytest.approx(1.0, abs=0.01)
+
+    def test_null_prediction(self):
+        result = apls(np.zeros_like(ROAD), ROAD, tolerance=10)
+        assert result["apls"] == pytest.approx(0.0)
+
+    def test_both_empty(self):
+        empty = np.zeros_like(ROAD)
+        result = apls(empty, empty, tolerance=10)
+        assert result["apls"] == pytest.approx(1.0)
+
+    def test_gt_empty_pred_nonempty(self):
+        result = apls(ROAD, np.zeros_like(ROAD), tolerance=10)
+        assert result["apls"] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# 14. DTAF1-Topo — connectivity-blended composite (metrics/dtaf1_topo.py)
+# ---------------------------------------------------------------------------
+
+class TestDtaf1Topo:
+    def test_perfect_prediction(self):
+        result = dtaf1_topo(GT, GT, ROAD_CONFIG, linear_classes=[1])
+        assert result["dtaf1_topo"] == pytest.approx(1.0, abs=0.01)
+
+    def test_null_prediction(self):
+        pred = np.zeros_like(GT)
+        result = dtaf1_topo(pred, GT, ROAD_CONFIG, linear_classes=[1])
+        assert result["dtaf1_topo"] == pytest.approx(0.0, abs=0.01)
+
+    def test_nonlinear_class_passthrough_unchanged(self):
+        # Building removed from the prediction; only the road (linear) class
+        # is blended with APLS -- the building's score must be plain F1.
+        pred = np.where(GT == 2, 0, GT).astype(np.uint8)
+        result = dtaf1_topo(pred, GT, ROAD_CONFIG, linear_classes=[1])
+        building_entry = result["per_class"][2]
+        assert building_entry["apls"] is None
+        assert building_entry["blended"] == pytest.approx(building_entry["f1"])
+
+    def test_dtaf1_result_matches_plain_dtaf1_exactly(self):
+        # Proves dtaf1() is never mutated by dtaf1_topo().
+        topo_result = dtaf1_topo(GT, GT, ROAD_CONFIG, linear_classes=[1])
+        plain_result = dtaf1(GT, GT, ROAD_CONFIG)
+        assert topo_result["dtaf1_result"] == plain_result
+
+
+# ---------------------------------------------------------------------------
+# 15. Road breakage regression — reproduces CLAUDE.md's documented "Known
+#     limitation of DTAF1" (confirmed on real SpaceNet data: DTAF1 stays at
+#     1.0 even at 75% random road-pixel deletion) and proves dtaf1_topo/apls
+#     fixes it.
+# ---------------------------------------------------------------------------
+
+class TestRoadBreakageRegression:
+    SHAPE = (128, 128)
+
+    def _breakage_scene(self, frac, seed=42):
+        gt = np.zeros(self.SHAPE, dtype=np.uint8)
+        gt[:, 62:66] = 1  # 4px-wide, full-height road stripe
+        rng = np.random.default_rng(seed)
+        road_pixels = np.argwhere(gt == 1)
+        pred = gt.copy()
+        if frac > 0:
+            n_remove = int(frac * len(road_pixels))
+            idx = rng.choice(len(road_pixels), n_remove, replace=False)
+            for r, c in road_pixels[idx]:
+                pred[r, c] = 0
+        return pred, gt
+
+    def test_dtaf1_stays_high_at_heavy_dropout(self):
+        # Sanity-anchors the documented bug itself before proving the fix.
+        pred, gt = self._breakage_scene(frac=0.75)
+        cfg = {1: {"name": "road", "tolerance": 10}}
+        assert dtaf1(pred, gt, cfg)["dtaf1"] > 0.9
+
+    def test_apls_and_dtaf1_topo_collapse_while_dtaf1_stays_high(self):
+        pred, gt = self._breakage_scene(frac=0.75)
+        cfg = {1: {"name": "road", "tolerance": 10}}
+        dtaf1_result = dtaf1(pred, gt, cfg)
+        topo_result = dtaf1_topo(pred, gt, cfg, linear_classes=[1])
+        road_apls = topo_result["per_class"][1]["apls"]
+
+        assert dtaf1_result["per_class"][1]["f1"] > 0.9
+        assert road_apls < 0.3
+        assert topo_result["dtaf1_topo"] < dtaf1_result["dtaf1"]
+
+    def test_apls_decreases_with_more_dropout(self):
+        cfg = {1: {"name": "road", "tolerance": 10}}
+        scores = []
+        for frac in [0.0, 0.25, 0.5, 0.75]:
+            pred, gt = self._breakage_scene(frac=frac)
+            result = dtaf1_topo(pred, gt, cfg, linear_classes=[1])
+            scores.append(result["per_class"][1]["apls"])
+
+        for i in range(len(scores) - 1):
+            assert scores[i] >= scores[i + 1] - 1e-9, (
+                f"APLS not monotonically decreasing: scores={scores}"
+            )

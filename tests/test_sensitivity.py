@@ -25,6 +25,7 @@ from metrics.cldice import cldice
 from metrics.boundary_f1 import boundary_f1, iou
 from metrics.point_f1 import point_f1
 from metrics.unified import cbhm
+from metrics.dtaf1_topo import dtaf1_topo
 
 
 # ---------------------------------------------------------------------------
@@ -150,13 +151,23 @@ def sweep_road_breakage(fractions=None, seed=42) -> dict:
     """
     Randomly delete 0…100% of road pixels.
     A topologically meaningful error: broken road network.
+
+    Also reports dtaf1_topo / road_apls (metrics/dtaf1_topo.py, metrics/apls.py)
+    alongside the existing metrics: DTAF1's per-pixel tolerance matching stays
+    high even at heavy dropout (scattered surviving pixels remain within
+    tolerance of some GT pixel), while the connectivity-aware dtaf1_topo/
+    road_apls should collapse well before dtaf1 does, over the same fraction
+    range documented in CLAUDE.md as DTAF1's known blind spot.
     """
     if fractions is None:
         fractions = [i / 10 for i in range(11)]
 
     rng = np.random.default_rng(seed)
     road_pixels = np.argwhere(GT == 1)
-    results = {k: [] for k in ["fraction", "dtaf1", "cbhm", "road_iou", "cldice"]}
+    results = {k: [] for k in
+               ["fraction", "dtaf1", "cbhm", "road_iou", "cldice", "dtaf1_topo", "road_apls"]}
+
+    road_cfg = {1: {"name": "road", "tolerance": ROAD_CONFIG[1]["tolerance"]}}
 
     for frac in fractions:
         pred = GT.copy()
@@ -167,11 +178,15 @@ def sweep_road_breakage(fractions=None, seed=42) -> dict:
                 pred[r, c] = 0
 
         s = _score(pred, GT)
+        topo = dtaf1_topo(pred, GT, road_cfg, linear_classes=[1])
+
         results["fraction"].append(frac)
         results["dtaf1"].append(s["dtaf1"])
         results["cbhm"].append(s["cbhm"])
         results["road_iou"].append(s["road_iou"])
         results["cldice"].append(s["cldice"])
+        results["dtaf1_topo"].append(topo["dtaf1_topo"])
+        results["road_apls"].append(topo["per_class"][1]["apls"])
 
     return results
 
