@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 All inputs are 2-D NumPy arrays (`H×W`, dtype `uint8`). Label convention: `0` = background, `1` = road (linear), `2` = building (polygonal), `3` = point feature (small discrete objects — trees, lamp posts, manhole covers — spanning only a few pixels; optional, only used where the data actually has a point class). Tolerances are expressed in pixels; tie to ground sample distance (GSD) via `d = physical_metres / GSD_metres_per_pixel`.
 
+`PAPER_OUTLINE.md` (untracked, in progress) is a detailed outline for the project's ACM SIGSPATIAL paper draft ("PLEM: Polygonal Linear Evaluation Metric"), formatted to mirror the section structure of the project's reference SIGSPATIAL template. It restates every metric formula/file:line snippet from this file plus proof sketches and complexity analysis in two appendices — treat it as a secondary, paper-facing view of the library, not a source of truth (this file and the code remain authoritative).
+
 ## Commands
 
 All commands are run from the project root using the `.venv` interpreter. Dependencies are listed in `requirements.txt` (`.venv/Scripts/python.exe -m pip install -r requirements.txt`). `torch` is CPU-only (no GPU available in this environment) — install it from the CPU wheel index rather than plain PyPI, or a plain `pip install -r requirements.txt` may pull a much larger CUDA build: `.venv/Scripts/python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cpu`.
