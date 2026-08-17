@@ -46,6 +46,12 @@ PALETTE = {
 DEFAULT_POINT_CLASSES = ("tree", "car")
 POINT_CLASS_ID = 3
 
+# Potsdam's palette also has a `building` class (unused until the losses/
+# training-loss pivot, CLAUDE.md) -- matches PLEM's global label convention
+# (0=bg, 1=road, 2=building, 3=point). Potsdam has no road/linear class at
+# all, so it can supply building+point but never the linear modality.
+BUILDING_CLASS_ID = 2
+
 
 def load_kaggle_dataset(dataset: str = "jahidhasan66/isprs-potsdam", dest="data/potsdam_raw") -> Path:
     """
@@ -100,26 +106,88 @@ def label_raster_to_point_mask(
     return out
 
 
+def label_raster_to_building_mask(label_rgb: np.ndarray, class_id: int = BUILDING_CLASS_ID) -> np.ndarray:
+    """
+    Threshold a Potsdam colored label raster to the `building` palette
+    color and return a plain H×W uint8 mask with `class_id` burned in.
+
+    Deliberately NOT routed through `label_raster_to_point_mask`'s
+    connected-component + area-filter pipeline: buildings are large
+    contiguous regions, not point instances, so CC+area-filtering is the
+    wrong primitive here -- it would arbitrarily split or drop large
+    contiguous footprints that legitimately exceed `max_area`.
+    """
+    color = np.array(PALETTE["building"])
+    mask = np.all(label_rgb == color, axis=-1)
+    out = np.zeros(label_rgb.shape[:2], dtype=np.uint8)
+    out[mask] = class_id
+    return out
+
+
+def label_raster_to_multiclass_mask(
+    label_rgb: np.ndarray,
+    point_classes=DEFAULT_POINT_CLASSES,
+    point_class_id: int = POINT_CLASS_ID,
+    building_class_id: int = BUILDING_CLASS_ID,
+    min_area: int = 4,
+    max_area: int = 2000,
+) -> np.ndarray:
+    """
+    Combine building + point extraction into one multiclass H×W label map:
+    building drawn first, point classes drawn on top on any conflict --
+    mirrors `datasets/spacenet.py::rasterize_tile_labels`'s explicit
+    "buildings drawn after roads on overlap" precedence convention, stated
+    here for documentation parity even though a real per-pixel conflict is
+    essentially impossible given Potsdam's label rasters already assign one
+    palette color per pixel (building and tree/car never share a pixel in
+    the source raster itself).
+    """
+    out = label_raster_to_building_mask(label_rgb, class_id=building_class_id)
+    point_map = label_raster_to_point_mask(
+        label_rgb, target_classes=point_classes, min_area=min_area, max_area=max_area,
+        class_id=point_class_id,
+    )
+    out[point_map > 0] = point_class_id
+    return out
+
+
 def tile_potsdam(
     image: np.ndarray,
     label_map: np.ndarray,
     tile_size: int = 256,
     stride: int = 256,
     min_instances: int = 1,
+    min_building_pixels: int = None,
+    building_class_id: int = BUILDING_CLASS_ID,
 ) -> list:
     """
-    Crop a large Potsdam image + derived point-class label map into
-    PLEM-scale (tile_size x tile_size) chips, keeping only crops with at
-    least `min_instances` point-class pixels. Returns a list of
-    (image_crop, label_crop) tuples.
+    Crop a large Potsdam image + derived label map into PLEM-scale
+    (tile_size x tile_size) chips. Returns a list of (image_crop, label_crop)
+    tuples.
+
+    Keep condition: by default (`min_building_pixels=None`) this reproduces
+    the original point-only behavior exactly -- keep a crop iff it has at
+    least `min_instances` nonzero (point-class) pixels. Passing an explicit
+    `min_building_pixels` (e.g. when `label_map` came from
+    `label_raster_to_multiclass_mask`) switches to an OR condition instead:
+    keep a crop if it has at least `min_instances` point-class pixels **OR**
+    at least `min_building_pixels` building-class pixels -- a crop covering
+    only a building with no point instances (or vice versa) should still be
+    kept, not require both.
     """
     h, w = label_map.shape
     crops = []
     for top in range(0, h - tile_size + 1, stride):
         for left in range(0, w - tile_size + 1, stride):
             label_crop = label_map[top:top + tile_size, left:left + tile_size]
-            if (label_crop > 0).sum() < min_instances:
-                continue
+            if min_building_pixels is None:
+                if (label_crop > 0).sum() < min_instances:
+                    continue
+            else:
+                point_px = ((label_crop > 0) & (label_crop != building_class_id)).sum()
+                building_px = (label_crop == building_class_id).sum()
+                if point_px < min_instances and building_px < min_building_pixels:
+                    continue
             image_crop = image[top:top + tile_size, left:left + tile_size]
             crops.append((image_crop, label_crop))
     return crops
@@ -177,11 +245,23 @@ def build_potsdam_sample(
     target_classes=DEFAULT_POINT_CLASSES,
     min_area: int = 4,
     max_area: int = 2000,
+    extract_buildings: bool = False,
+    min_building_pixels: int = 1,
 ) -> list:
     """
-    Build a curated local sample of up to `n_crops` real Potsdam point-feature
-    scenes, cached under `cache_dir`. Requires `load_kaggle_dataset()` (or an
+    Build a curated local sample of up to `n_crops` real Potsdam scenes,
+    cached under `cache_dir`. Requires `load_kaggle_dataset()` (or an
     equivalent manual download into `raw_dir`) to have been run first.
+
+    extract_buildings : if True, also threshold the `building` palette color
+        into the same label map at `BUILDING_CLASS_ID` (2), alongside the
+        existing point extraction at `POINT_CLASS_ID` (3) -- produces a
+        genuinely multiclass (building+point) label map per tile, needed for
+        joint SpaceNet+Potsdam training (`datasets/joint.py`). A tile is kept
+        if it has point instances OR building coverage (not both required;
+        see `tile_potsdam`'s OR-keep condition). Default `False` preserves
+        this function's original point-only behavior exactly -- existing
+        callers are unaffected.
     """
     raw_dir = Path(raw_dir)
     cache_dir = Path(cache_dir)
@@ -208,10 +288,19 @@ def build_potsdam_sample(
             continue
         label_rgb = np.array(Image.open(label_path).convert("RGB"))
         image = np.array(Image.open(rgb_path).convert("RGB"))
-        point_map = label_raster_to_point_mask(
-            label_rgb, target_classes=target_classes, min_area=min_area, max_area=max_area,
-        )
-        crops = tile_potsdam(image, point_map, tile_size=tile_size, stride=tile_size)
+        if extract_buildings:
+            combined_map = label_raster_to_multiclass_mask(
+                label_rgb, point_classes=target_classes, min_area=min_area, max_area=max_area,
+            )
+            crops = tile_potsdam(
+                image, combined_map, tile_size=tile_size, stride=tile_size,
+                min_instances=1, min_building_pixels=min_building_pixels,
+            )
+        else:
+            point_map = label_raster_to_point_mask(
+                label_rgb, target_classes=target_classes, min_area=min_area, max_area=max_area,
+            )
+            crops = tile_potsdam(image, point_map, tile_size=tile_size, stride=tile_size)
         for img_c, lbl_c in crops:
             all_crops.append((label_path.stem, img_c, lbl_c))
         if len(all_crops) >= n_crops * 4:  # enough pool to subsample from

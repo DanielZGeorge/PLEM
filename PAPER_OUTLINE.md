@@ -14,9 +14,11 @@
 > base `dtaf1`/`cbhm` are retained as motivating baselines. All numeric values in §1, §4, §6, and the
 > new §9.4/§10.4 (loss ablation) were computed directly against the live code in this session (see
 > `tests/test_metrics_sanity.py`, `tests/test_sensitivity.py`, `tests/test_losses_sanity.py`,
-> `tests/test_loss_sensitivity.py`). **§9.5/§10.5 (real joint multi-source training run) are marked
-> pending** — that milestone has not yet been executed as of this revision; do not read the setup
-> description there as reported results.
+> `tests/test_loss_sensitivity.py`). §9.5's data-side setup (Potsdam building extraction,
+> `datasets/joint.py`) is now built and validated against real data (123 SpaceNet + 30 Potsdam
+> tiles loaded and tagged, 3 real Potsdam crops confirmed to carry both building and point labels).
+> **§10.5 (real joint training results) is still marked pending** — the training run itself has not
+> yet been executed as of this revision; do not read §9.5's setup description as reported results.
 
 ---
 
@@ -1008,28 +1010,40 @@ documented directly in `_logits_from_label`'s docstring and is itself a useful, 
 CornerNet-style focal formulation, not a bounded [0, 1] ratio the tolerance/clDice terms are),
 motivating `PLEMMultiTaskLoss`'s per-term `weights` dict for rebalancing during real training.
 
-### 9.5 Joint Multi-Source Training Setup *(in progress — setup described, results pending, §10.5)*
+### 9.5 Joint Multi-Source Training Setup *(data side complete; training run pending, §10.5)*
 
 Neither SpaceNet nor Potsdam alone annotates all three feature types (§7.6): SpaceNet supplies
 road+building but no point class; Potsdam's 6-class palette includes `building` and point-capable
 `tree`/`car` classes but no road/linear class at all. A genuinely joint 0D/1D/2D training run
 therefore requires combining both sources under `PLEMMultiTaskLoss`'s masked multi-source scheme
-(§7.6): extending `datasets/potsdam.py` to also extract its `building` palette color (currently
-unused — only `tree`/`car` are extracted today) alongside its existing point extraction, so Potsdam
-tiles supply building+point while SpaceNet tiles supply road+building; extending `SmallUNet` (§9.3)
-from 3 to 4 output classes; and splitting each source's tiles 70/15/15 at the tile level
-independently before concatenating (a single pooled-then-permuted split risks starving the smaller
-Potsdam side, which has only ~15 crops, from a split entirely). SpaceNet and Potsdam are not
-resampled to a common ground sample distance (SpaceNet ~0.3–0.5 m/px vs. Potsdam's 6 cm/px) — each
-source is patchified independently to the same 256×256 *pixel* patch size, accepting that a
-Potsdam patch covers a much smaller physical area than a SpaceNet patch; stated as an explicit,
-known limitation (§11) rather than silently glossed over. The resulting model is evaluated with
-`evaluate_all(..., point_classes=[3])` — the first end-to-end exercise of `evaluate_all()`'s
-`point_classes` argument on a real trained model's output — and compared against §9.3's frozen
-CE+Dice baseline on the SpaceNet-only classes/tiles they share, framed honestly as a **pipeline
-sanity check**, matching §9.3's own framing, not a benchmark-scale ablation study (§9.4's small
-real/~100-tile SpaceNet sample, plus an even smaller ~15-crop Potsdam sample, is not statistically
-powered for one).
+(§7.6). **The data-side half of this is now built and validated against real data**:
+`datasets/potsdam.py::label_raster_to_building_mask` extracts the `building` palette color (a
+straight threshold, deliberately not routed through the point pipeline's connected-component +
+area filter, which would wrongly split/drop large contiguous footprints) alongside the existing
+point extraction, combined by `label_raster_to_multiclass_mask`; `build_potsdam_sample
+(extract_buildings=True)` builds this combined cache (`tile_potsdam`'s new `min_building_pixels`
+parameter switches its crop-keep test to an OR condition — point instances *or* building coverage,
+not both required). Run against the real 15-crop Potsdam sample: **14 of 15 cached crops have
+building coverage, 5 have point instances, 3 have both** — confirming genuinely multiclass
+(building+point) tiles exist in the cache, not just in principle. `datasets/joint.py` then loads
+and tags every cached tile from both sources (`SOURCE_CLASSES = {"spacenet": [1,2], "potsdam":
+[2,3]}`, `class_mask_for_source()` returning the `(4,)` mask `PLEMMultiTaskLoss` consumes directly)
+— run against the real caches in this session: **123 SpaceNet tiles + 30 Potsdam tiles = 153
+tagged tiles**, split 70/15/15 at the tile level *independently per source* before concatenating (a
+single pooled-then-permuted split risks starving the smaller Potsdam side, which has only 15
+crops, from a split entirely).
+
+**Remaining, not yet done**: extending `SmallUNet` (§9.3) from 3 to 4 output classes and actually
+running training (§10.5). SpaceNet and Potsdam are not resampled to a common ground sample
+distance (SpaceNet ~0.3–0.5 m/px vs. Potsdam's 6 cm/px) — each source is patchified independently
+to the same 256×256 *pixel* patch size, accepting that a Potsdam patch covers a much smaller
+physical area than a SpaceNet patch; stated as an explicit, known limitation (§11) rather than
+silently glossed over. The resulting model will be evaluated with `evaluate_all(...,
+point_classes=[3])` — the first end-to-end exercise of `evaluate_all()`'s `point_classes` argument
+on a real trained model's output — and compared against §9.3's frozen CE+Dice baseline on the
+SpaceNet-only classes/tiles they share, framed honestly as a **pipeline sanity check**, matching
+§9.3's own framing, not a benchmark-scale ablation study (the ~100-tile SpaceNet sample, plus an
+even smaller 15-crop Potsdam sample, is not statistically powered for one).
 
 ---
 
