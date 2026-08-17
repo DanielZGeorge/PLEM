@@ -1,0 +1,113 @@
+\section{Formal Properties and Proof Sketches}
+\label{app:proofs}
+
+One short proof per Section~\ref{sec:evalprotocol} eval-metric primitive, matching the exact
+parameterizations used there. \texttt{losses/}'s terms are not given formal proofs here ---
+Section~\ref{sec:method}'s claims are validated empirically, via the unit tests in
+Section~\ref{sec:results}/\texttt{tests/test\_losses\_sanity.py} and the ablation sweeps in
+Sections~\ref{subsec:lossablation-setup}--\ref{subsec:lossablation-results}, rather than proven;
+this is noted explicitly rather than left implicit.
+
+\subsection{Shared Edge-Case Correctness}
+\label{app:a1}
+
+\textbf{Claim:} every primitive in Section~\ref{sec:evalprotocol} returns $1.0$ when both $P_c$
+and $G_c$ are empty, and $0.0$ when exactly one is empty.
+
+\textbf{Proof sketch:} verified by direct inspection of the identical guard pattern in each
+implementation --- \texttt{dtaf1.py:43-51} ($n_{\mathrm{pred}}=0$ and $n_{\mathrm{gt}}=0 \to$ all
+of precision/recall/f1 $=1.0$; either alone zero $\to$ all $0.0$), \texttt{cldice.py:51-56},
+\texttt{boundary\_f1.py:68-72} (same shape, on skeleton and boundary pixel counts respectively),
+\texttt{point\_f1.py:109-120} (on instance counts), and \texttt{apls.py:141-144} (on foreground
+pixel counts, prior to any graph construction). Since every downstream composite (CBHM,
+DTAF1-Topo, \texttt{cbhm\_soft}) is built from weighted means and harmonic means of these
+primitives, this shared base case is what makes ``both classes vacuously correct'' a well-defined
+$1.0$ at every level of the library, not just at the leaves.
+
+\subsection{DTAF1 Boundedness and Reduction Equivalence}
+\label{app:a2}
+
+\textbf{Claim:} $\mathrm{dtaf1\_macro}$, $\mathrm{dtaf1\_weighted} \in [0,1]$ always; and
+$\mathrm{dtaf1\_weighted} = \mathrm{dtaf1\_macro}$ when GT pixel counts are equal across all
+classes in \texttt{class\_config}.
+
+\textbf{Proof sketch:} each per-class $F1_c$ is itself a harmonic mean of two quantities in
+$[0,1]$ (Section~\ref{subsec:dtaf1}), hence $F1_c \in [0,1]$; both the unweighted mean
+(\texttt{dtaf1.py:124}) and the pixel-count-weighted mean (\texttt{dtaf1.py:125-127}) are convex
+combinations of the $F1_c$ values, hence also in $[0,1]$. When every class's $n_c$ (GT pixel
+count) is equal, the weights $n_c / \sum n_c$ reduce to $1/|C|$ for every class, making the
+weighted sum numerically identical to the unweighted mean.
+
+\subsection{CBHM Zero-Collapse}
+\label{app:a3}
+
+\textbf{Claim:} $\mathrm{cbhm}=0$ if and only if $\mathrm{clDice}_{\mathrm{mean}}=0$ or
+$\mathrm{BF}_{\mathrm{mean}}=0$ (or both).
+
+\textbf{Proof sketch:} directly from \texttt{unified.py:80-81} --- $\mathrm{score} =
+2 \cdot \mathrm{cl\_mean} \cdot \mathrm{bf\_mean} / \mathrm{denom}$ if $\mathrm{denom}>0$ else
+$0.0$. If either $\mathrm{cl\_mean}$ or $\mathrm{bf\_mean}$ is exactly 0, the numerator is 0 while
+$\mathrm{denom}$ is the other (generally nonzero) term, so $\mathrm{score}=0$ exactly ---
+regardless of how close to 1 the other mean is. Conversely, if both means are strictly positive,
+both numerator and denominator are strictly positive, so $\mathrm{score}>0$. This is the formal
+statement behind Table~\ref{tab:failure-modes}'s ``Road shifted 5px'' row ($\mathrm{clDice}=0$
+forces $\mathrm{CBHM}=0$ even though $\mathrm{DTAF1}=1.000$ on the identical input).
+
+\subsection{\texttt{cbhm\_soft} Non-Collapse}
+\label{app:a4}
+
+\textbf{Claim:} $\mathrm{cbhm\_soft}=0$ only if \emph{both} $\mathrm{cl\_mean\_weighted}=0$ and
+$\mathrm{bf\_mean\_weighted}=0$ (unlike CBHM's single-sided collapse in
+Section~\ref{app:a3}).
+
+\textbf{Proof sketch:} from \texttt{unified.py:102}, $\mathrm{cbhm\_soft} = w_{\mathrm{cl}} \cdot
+\mathrm{cl\_mean\_weighted} + w_{\mathrm{bf}} \cdot \mathrm{bf\_mean\_weighted}$ is a weighted
+arithmetic mean with non-negative weights summing to 1 (or 0.5/0.5 when both totals are 0). A
+weighted arithmetic mean of two non-negative terms is 0 only if every term with positive weight is
+itself 0. Since $w_{\mathrm{cl}}, w_{\mathrm{bf}} \ge 0$ and at least one is strictly positive
+whenever any GT pixels exist, $\mathrm{cbhm\_soft}=0$ requires whichever of
+$\mathrm{cl\_mean\_weighted}$/$\mathrm{bf\_mean\_weighted}$ has positive weight to be 0 --- and if
+only one type is present (the other has zero GT pixels and thus zero weight),
+$\mathrm{cbhm\_soft}$ simply equals that one type's weighted mean, never forced toward 0 by the
+\emph{other}, absent type. This is the mechanism behind the
+\texttt{Khartoum\_img371}/\texttt{Khartoum\_img333} contrast in Section~\ref{subsec:weighted-reduction}:
+\texttt{cbhm\_soft} can only be dragged down by a failing class in proportion to that class's own
+pixel-count weight, not collapsed outright by it.
+
+\subsection{APLS Score Boundedness}
+\label{app:a5}
+
+\textbf{Claim:} every per-pair APLS score, and hence the aggregate \texttt{apls} score, lies in
+$[0,1]$.
+
+\textbf{Proof sketch:} each per-pair score is either $0.0$ (unmatched, \texttt{apls.py:181}) or
+$\max(0.0, 1.0 - |\mathrm{pred\_len} - \mathrm{gt\_len}|/\mathrm{gt\_len})$
+(\texttt{apls.py:185}) --- the outer $\max(0.0, \cdot)$ clamps the lower bound, and the term
+inside is $\le 1.0$ whenever $\mathrm{pred\_len} \ge 0$ (shortest-path lengths are non-negative by
+construction), so every individual score lies in $[0,1]$. The aggregate \texttt{apls} score is
+\texttt{np.mean(scores)}, a convex combination of values in $[0,1]$, hence itself in $[0,1]$.
+
+\subsection{Point F1: Hungarian Optimality vs.\ Greedy Suboptimality}
+\label{app:a6}
+
+\textbf{Claim:} there exist configurations of GT/predicted point centroids where greedy
+nearest-neighbor matching strictly under-counts true positives relative to the Hungarian
+assignment used in \texttt{point\_f1} (\texttt{point\_f1.py:58-65}).
+
+\textbf{Proof sketch (formalizing \texttt{TestPointInstanceMatching}'s adversarial case):}
+consider two GT points $g_1, g_2$ and one predicted point $p$ positioned such that
+$\mathrm{dist}(g_1,p) < \mathrm{dist}(g_2,p)$ but a \emph{second} predicted point $p'$ exists with
+$\mathrm{dist}(g_2,p') < \mathrm{tolerance}$ while $\mathrm{dist}(g_1,p') > \mathrm{tolerance}$. A
+greedy matcher processing predictions in an order that assigns $p \to g_1$ first (the globally
+nearer pair) can leave $g_2$ unmatched to $p'$ if it was already ``claimed'' --- or, in the
+canonical clustered-points case, greedy assigns the single nearest GT to \emph{both} predictions'
+shared nearest neighbor, yielding $\mathrm{TP}=1$. The Hungarian assignment instead minimizes
+total assignment cost over the \emph{complete} bipartite graph simultaneously
+(\texttt{linear\_sum\_assignment} on the full cost matrix), correctly recovering the one-to-one
+pairing $p{\leftrightarrow}g_1, p'{\leftrightarrow}g_2$ that gives $\mathrm{TP}=2$ --- strictly
+more true positives from the same input, because it considers all pairings jointly rather than
+greedily committing to the locally-best match first. This is also the formal reason
+Section~\ref{subsec:heatmap-loss} does not attempt a differentiable relaxation of Hungarian
+matching for the training loss: the property that makes it correct (global joint optimization
+over the complete bipartite graph) is exactly the discrete, combinatorial structure that has no
+useful gradient.

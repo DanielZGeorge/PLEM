@@ -1,0 +1,206 @@
+\section{A Differentiable Multi-Task Loss for Joint 0D/1D/2D Extraction}
+\label{sec:method}
+
+Sections~\ref{sec:evalprotocol}--\ref{sec:topological} are eval-only by construction: DTAF1,
+Boundary F1, and APLS are built on \texttt{scipy.ndimage.distance\_transform\_edt}; clDice on
+\texttt{skimage.morphology.skeletonize}; Point F1 on
+\texttt{scipy.optimize.linear\_sum\_assignment}. Every one of these operations is discrete and
+breaks autograd, so none of them can be used directly as a training loss. This section introduces
+\texttt{losses/}, a new top-level package (parallel to \texttt{metrics/} and \texttt{datasets/},
+pure \texttt{torch}) of differentiable training losses, each a direct analog of one primitive from
+Section~\ref{sec:evalprotocol} --- mirrored in spirit, never sharing code with its eval-side
+counterpart (numpy+scipy vs.\ torch tensors inside an autograd graph cannot share an
+implementation) --- so a single model can be trained to \emph{jointly} predict point (0D), linear
+(1D), and polygonal (2D) map features using a loss shaped by the same tolerance, topology, and
+instance-matching considerations Sections~\ref{sec:evalprotocol}--\ref{sec:topological} spent five
+sections motivating.
+
+\subsection{Design Principle: Differentiable Analogs, Not Shared Code}
+\label{subsec:method-principle}
+
+\texttt{losses/} operates on the standard PyTorch segmentation convention --- $(B,C,H,W)$ logits,
+$(B,H,W)$ int64 label maps, channel index equal to class id --- not Section~\ref{sec:evalprotocol}'s
+$H\times W$ numpy label-map convention. Table~\ref{tab:correspondence} summarizes the
+correspondence and, for each term, what had to change relative to its eval-metric counterpart to
+make it differentiable.
+
+\begin{table*}
+  \caption{Eval metric $\leftrightarrow$ differentiable loss term correspondence.}
+  \label{tab:correspondence}
+  \begin{tabular}{@{}p{2.7cm}p{2.7cm}p{10.5cm}@{}}
+    \toprule
+    Eval metric & \texttt{losses/} term & What changed to make it differentiable \\
+    \midrule
+    DTAF1 (\S\ref{subsec:dtaf1}) & \texttt{ToleranceBandLoss} (\S\ref{subsec:tolerance-loss}) &
+      GT-side dilation-by-radius precomputed once per batch (GT is a fixed target, not a model
+      output); the harder \emph{recall} direction --- which needs an EDT of the \emph{prediction}
+      on the eval side --- is made differentiable by soft-dilating the model's own continuous
+      probability map via iterated max-pool instead of a detached hard threshold. \textbf{Both}
+      precision and recall stay fully differentiable; no stop-gradient approximation was needed on
+      either term, a stronger result than initially assessed necessary (\S\ref{sec:discussion}). \\
+    Boundary F1 (\S\ref{subsec:bf}) & \texttt{SoftBoundaryLoss} (\S\ref{subsec:boundary-loss}) &
+      Soft boundary map $=$ morphological gradient $\mathrm{dilate}(x) - \mathrm{erode}(x)$
+      (saturates to exactly 1.0 at a hard edge --- an early $|x-\mathrm{avgpool}(x)|$ formulation
+      was tried and rejected, since its peak response is well below 1.0 and silently caps
+      achievable recall even under perfect alignment); reuses \texttt{ToleranceBandLoss}'s
+      precision/recall primitive on this soft boundary map instead of the full class mask. \\
+    clDice (\S\ref{subsec:cldice}) & \texttt{SoftClDiceLoss} (\S\ref{subsec:cldice-loss}) &
+      Shit et~al.'s (2021) soft-skeletonization: iterated soft-erode/soft-open via
+      max-pool/min-pool, applied directly to the probability map --- no discrete
+      \texttt{skeletonize} call. Runs for a \emph{fixed} iteration count rather than to
+      convergence, so width-invariance is bounded (\S\ref{subsec:cldice-loss},
+      \S\ref{sec:discussion}), unlike the eval-side metric. \\
+    Point F1 (\S\ref{subsec:pointf1}) & \texttt{PointHeatmapLoss} (\S\ref{subsec:heatmap-loss}) &
+      \textbf{Not a relaxation.} Hungarian assignment and connected-component labeling have no
+      useful gradient path. Reformulated entirely as CenterNet-style dense Gaussian-heatmap
+      regression --- a genuinely different formulation, not a softened version of the eval
+      metric's algorithm. \\
+    APLS / DTAF1-Topo (\S\ref{subsec:apls}/\S\ref{subsec:dtaf1topo}) & \emph{(none)} & No
+      tractable lightweight differentiable relaxation of graph shortest-path recomputation
+      exists; stays eval-only permanently --- a stated design decision
+      (\S\ref{sec:discussion}), not a gap to be filled later. \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\texttt{PLEMMultiTaskLoss} (Section~\ref{subsec:multitask-loss}) combines the first three, with
+\texttt{class\_config} reused verbatim from \texttt{dtaf1.py}'s convention
+(Section~\ref{subsec:dtaf1}) --- the same dict can be passed to \texttt{dtaf1()} for evaluation
+and \texttt{ToleranceBandLoss} for training.
+
+\subsection{Soft Tolerance-Band Loss (DTAF1 Analog)}
+\label{subsec:tolerance-loss}
+
+Recall that DTAF1's precision test only requires a distance transform \emph{from GT}, while its
+recall test requires one \emph{from the prediction}. This asymmetry turns out to matter: precision
+needs only a GT-side dilation-by-$d$ mask (equivalent to $\mathrm{dist\_from\_gt} \le d$), which is
+fixed target construction and can be precomputed once per batch under \texttt{no\_grad}. Recall is
+the harder direction on the eval side because it distance-transforms the \emph{prediction} ---
+but since \texttt{F.max\_pool2d} is differentiable, applying it directly and iteratively to the
+model's own soft probability map (``soft-dilating'' it) keeps gradients flowing with no detach:
+\begin{align}
+  \mathrm{gt\_band}_c &= \mathrm{dilate}(G_c, d_c) \quad \text{(precomputed, no\_grad)} \\
+  \mathrm{precision}_c &= \frac{\sum(p_c \cdot \mathrm{gt\_band}_c) + \epsilon}{\sum(p_c) + \epsilon} \\
+  \mathrm{recall}_c &= \frac{\sum(g_c \cdot \mathrm{soft\_dilate}(p_c, d_c)) + \epsilon}{\sum(g_c) + \epsilon} \\
+  \mathrm{loss}_c &= w(1-\mathrm{precision}_c) + (1-w)(1-\mathrm{recall}_c)
+\end{align}
+where $p_c$ is the model's softmax probability for class $c$ and $g_c$ is the one-hot GT mask.
+Both denominators use epsilon smoothing (matching \texttt{train\_unet.ipynb}'s existing soft-Dice
+convention) rather than explicit both-empty branching, so a class absent from both prediction and
+GT reduces cleanly toward the ``both empty $\to$ perfect'' convention without a separate code
+path.
+
+\begin{lstlisting}[language=Python, caption={\texttt{losses/tolerance.py}}]
+def soft_tolerance_pair_loss(pred_soft, gt_hard, radius, eps=1e-6, precision_weight=0.5):
+    gt_band = _dilate_binary(gt_hard.unsqueeze(1), radius)[:, 0]
+    dilated_pred = soft_dilate_prob(pred_soft.unsqueeze(1), radius)[:, 0]
+    p_sum, g_sum = pred_soft.sum(dim=(1, 2)), gt_hard.sum(dim=(1, 2))
+    prec_num = (pred_soft * gt_band).sum(dim=(1, 2))
+    rec_num = (gt_hard * dilated_pred).sum(dim=(1, 2))
+    precision = (prec_num + eps) / (p_sum + eps)
+    recall = (rec_num + eps) / (g_sum + eps)
+    loss = precision_weight * (1.0 - precision) + (1.0 - precision_weight) * (1.0 - recall)
+    return loss.mean()
+\end{lstlisting}
+
+\texttt{ToleranceBandLoss} applies this per class over a \texttt{class\_config} dict of the same
+\texttt{\{class\_id: \{"name", "tolerance"\}\}} shape as \texttt{dtaf1.py}'s
+\texttt{ROAD\_BUILDING\_CONFIG}, macro-averaging across the configured linear + polygon classes.
+
+\subsection{Soft Boundary Loss (Boundary F1 Analog)}
+\label{subsec:boundary-loss}
+
+The soft boundary map reuses the same soft-erode/soft-dilate primitives
+Section~\ref{subsec:cldice-loss} introduces for soft-skeletonization:
+$\mathrm{boundary}(x) = \mathrm{dilate}(x) - \mathrm{erode}(x)$, the morphological gradient, which
+is $0$ in flat interior/exterior regions and saturates to exactly $1.0$ at a hard, confident class
+edge. \texttt{SoftBoundaryLoss} then calls Section~\ref{subsec:tolerance-loss}'s
+\texttt{soft\_tolerance\_pair\_loss} on this soft boundary map (predicted side) against a
+thresholded boundary map of the one-hot GT (computed under \texttt{no\_grad}) instead of on the
+full class mask --- the most directly-shared piece of machinery between any two \texttt{losses/}
+terms, and the most mechanical of the three.
+
+\subsection{Soft-clDice Loss (clDice Analog)}
+\label{subsec:cldice-loss}
+
+Implements Shit et~al.'s (CVPR 2021) soft-skeletonization directly: iterated
+$\mathrm{soft\_erode}(x) = -\mathrm{maxpool}(-x)$ / $\mathrm{soft\_dilate}(x) = \mathrm{maxpool}(x)$
+/ $\mathrm{soft\_open}(x) = \mathrm{soft\_dilate}(\mathrm{soft\_erode}(x))$, accumulating skeleton
+response across scales exactly as the original paper's reference algorithm does, applied to the
+model's continuous probability map instead of a discretely-\texttt{skeletonize()}d binary mask:
+\begin{align}
+  \mathrm{tprec}_c &= \frac{\sum(\mathrm{skel}(p_c) \cdot g_c) + \epsilon}{\sum(\mathrm{skel}(p_c)) + \epsilon} \\
+  \mathrm{tsens}_c &= \frac{\sum(\mathrm{skel}(g_c) \cdot p_c) + \epsilon}{\sum(\mathrm{skel}(g_c)) + \epsilon} \\
+  \mathrm{soft\_clDice}_c &= \frac{2 \cdot \mathrm{tprec}_c \cdot \mathrm{tsens}_c}
+                                  {\mathrm{tprec}_c + \mathrm{tsens}_c + \epsilon}, \quad
+  \mathrm{loss}_c = 1 - \mathrm{soft\_clDice}_c
+\end{align}
+
+\textbf{Known limitation, unlike the eval-side metric:} soft-skeletonization runs for a
+\emph{fixed} number of iterations ($\mathrm{iters}=10$ default), not to convergence, so
+width-invariance only holds up to whatever width that iteration count can fully erode away --- a
+documented, iteration-bounded version of Section~\ref{subsec:cldice}'s exact width-invariance.
+Validated directly: on a $32\times32$ synthetic scene, a GT road of thickness 3px scores
+soft-clDice loss $4.77\times10^{-7}$ against a matching thickness-3px prediction, and \textbf{the
+identical $4.77\times10^{-7}$} against a $3\times$-thicker (9px) prediction on the same centerline
+--- i.e., zero measurable width sensitivity up to a $3\times$ ratio --- while plain soft Dice on
+the same 9px input scores only $0.500$, confirming soft-clDice is doing something meaningfully
+different from plain Dice, not just numerically saturating
+(\texttt{tests/test\_losses\_sanity.py::TestSoftClDiceLoss::test\_width\_insensitivity}).
+
+\subsection{Point-Heatmap Regression Loss (Point F1 Analog, Reformulated)}
+\label{subsec:heatmap-loss}
+
+Per Table~\ref{tab:correspondence}, this term is \textbf{not} a relaxation of
+Section~\ref{subsec:pointf1}'s Hungarian matching --- connected-component labeling and
+combinatorial assignment have no useful gradient. Instead, point supervision is reformulated
+entirely as dense Gaussian-heatmap regression, CenterNet-style: each GT point instance's centroid
+(extracted via the exact same \texttt{scipy.ndimage.label} + \texttt{center\_of\_mass} pipeline
+\texttt{point\_f1.py}'s \texttt{\_instance\_centroids} already uses at eval time --- here purely
+for \emph{target} construction, under \texttt{no\_grad}) is burned into a Gaussian blob on a
+target heatmap (overlapping Gaussians combined via elementwise max, avoiding peak inflation where
+GT points cluster), and the point class's own softmax probability channel is trained directly
+against it with a penalty-reduced pixelwise focal loss (CornerNet/CenterNet formulation):
+\begin{align}
+  \mathrm{gt\_heatmap}(x) &= \max_{c \in \mathrm{centroids}} \exp\left(-\frac{\|x-c\|^2}{2\sigma^2}\right) \\
+  \mathrm{pos\_loss}(x) &= -(1-p(x))^\alpha \log p(x) \quad \text{if } \mathrm{gt\_heatmap}(x) = 1 \\
+  \mathrm{neg\_loss}(x) &= -(1-\mathrm{gt\_heatmap}(x))^\beta p(x)^\alpha \log(1-p(x)) \quad
+    \text{otherwise} \\
+  \mathrm{loss} &= \frac{\sum_x \mathrm{pos\_loss}(x) + \sum_x \mathrm{neg\_loss}(x)}
+                        {\max(1, \mathrm{num\_positive\_pixels})}
+\end{align}
+\texttt{point\_f1.py}'s Hungarian matching is untouched and remains a pure eval-time metric ---
+this is a genuine, documented train/eval formulation mismatch (Section~\ref{sec:discussion}), not
+papered over as a relaxation.
+
+\subsection{\texttt{PLEMMultiTaskLoss}: Combination and Multi-Source Class Masking}
+\label{subsec:multitask-loss}
+
+The combined loss sums a CE+soft-Dice base term (adapted from \texttt{train\_unet.ipynb}'s
+existing \texttt{combined\_loss}) with the three geometry-aware terms above, each independently
+weighted:
+\begin{align}
+  L = w_{\mathrm{ce\_dice}} L_{\mathrm{ce\_dice}} + w_{\mathrm{tol}} L_{\mathrm{tolerance}} +
+      w_{\mathrm{cldice}} L_{\mathrm{cldice}} + w_{\mathrm{heatmap}} L_{\mathrm{heatmap}}
+\end{align}
+
+\textbf{Multi-source class masking.} SpaceNet tiles annotate road+building only (no point class
+exists at SpaceNet's GSD, Section~\ref{subsec:realdata-setup}); Potsdam tiles annotate
+building+point only (no road class in Potsdam's palette). Training one 4-class model on both
+jointly requires each sample to be supervised only on the classes its \emph{source} actually
+annotates. This is implemented by additively biasing a sample's masked-out class channels to a
+large negative logit \textbf{before} any softmax is taken:
+\begin{align}
+  \mathrm{logits}'[:,c] = \mathrm{logits}[:,c] + (1 - \mathrm{class\_mask}[:,c]) \cdot (-10^4)
+\end{align}
+Since every term above is a function of softmax probabilities, driving a masked channel's
+pre-softmax logit to $-\infty$ makes its post-softmax probability --- and therefore its gradient
+contribution to \emph{every} term at once --- vanish identically. This is a single mechanism
+shared by all four loss terms, rather than four bespoke masking implementations, and relies on
+target label maps never containing a class id a sample's source doesn't annotate (true by
+construction for both \texttt{datasets/spacenet.py} and \texttt{datasets/potsdam.py}'s
+rasterizers, Sections~\ref{subsec:realdata-setup},~\ref{subsec:joint-setup}).
+\texttt{PLEMMultiTaskLoss.forward()} returns a dict (\texttt{"loss"} plus each active sub-term as
+a detached float) --- mirroring Section~\ref{sec:evalprotocol}'s ``always return a dict of named
+scalars'' convention on the training side too, so per-epoch logging code looks structurally
+similar to \texttt{evaluate\_all()}'s output.

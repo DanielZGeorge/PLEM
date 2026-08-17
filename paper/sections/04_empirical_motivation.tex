@@ -1,0 +1,91 @@
+\section{Why These Metrics? Empirical Motivation}
+\label{sec:motivation}
+
+A controlled experiment showing the baseline tool fails, followed by an interpretation of why.
+
+\subsection{Experimental Setup}
+\label{subsec:motivation-setup}
+
+All numbers in this section come from the $128\times128$ synthetic scene defined in
+\texttt{notebooks/metric\_comparison.ipynb}: a 3px-wide vertical road stripe (class 1) through the
+tile center, plus a $40\times40$ building rectangle (class 2) in the upper-left quadrant. Nine
+sweep functions in \texttt{tests/test\_sensitivity.py} perturb this scene along one axis at a
+time (Table~\ref{tab:sweeps}).
+
+\begin{table}
+  \caption{Synthetic sensitivity sweeps (\texttt{tests/test\_sensitivity.py}).}
+  \label{tab:sweeps}
+  \begin{tabular}{@{}lll@{}}
+    \toprule
+    Sweep & Perturbs & Range \\
+    \midrule
+    \texttt{sweep\_road\_offset} & horizontal road shift & 0--24px \\
+    \texttt{sweep\_road\_breakage} & random road pixel dropout & 0--100\% \\
+    \texttt{sweep\_building\_erosion} & building erosion radius & 0--11px \\
+    \texttt{sweep\_road\_thickness} & predicted road thickness & 1--21px \\
+    \texttt{sweep\_class\_imbalance} & road:building GT ratio & 0.4--3.1\% \\
+    \texttt{sweep\_sparse\_class\_offset} & sparse road offset & 0--20px \\
+    \texttt{sweep\_point\_jitter} & horizontal point shift & 0--20px \\
+    \texttt{sweep\_point\_dropout} & fraction points removed & 0--100\% \\
+    \texttt{sweep\_point\_clutter} & spurious points added & 0--20 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Section~\ref{subsec:lossablation-setup} introduces a tenth family,
+\texttt{tests/test\_loss\_sensitivity.py}, that reuses these exact same scenes/perturbation
+functions (imported directly, not duplicated) to sweep the \emph{loss} side instead.
+
+\subsection{Results}
+\label{subsec:motivation-results}
+
+Table~\ref{tab:failure-modes} is reproduced from a direct run of the library against this scene.
+Three additional single-axis sweeps sharpen the picture:
+
+\textbf{Road offset sweep} (tolerance $=10$px): Road IoU and clDice both collapse to $0.000$
+immediately at offset $=4$px, while DTAF1 stays at $1.000$ through offset $=10$px exactly at its
+tolerance boundary, then degrades --- $0.667$ at 12px, $0.500$ from 16px onward (the building's
+still-perfect class dragging the macro average).
+
+\textbf{Road breakage sweep} (seed 42): Road IoU degrades roughly linearly with dropout fraction
+($1.000 \to 0.500$ at 50\% $\to 0.201$ at 80\%), clDice degrades faster and less evenly, but
+\textbf{DTAF1 remains pinned at exactly $1.000$ for every dropout fraction from 0\% through 90\%},
+only dropping (to $0.500$) once 100\% of road pixels are gone. This is the blind spot in its
+starkest form: DTAF1 cannot distinguish a perfectly intact road from one with 90\% of its pixels
+randomly deleted, because the surviving pixels are scattered widely enough that some surviving
+pixel still falls within the 10px tolerance radius of nearly every GT pixel.
+
+\textbf{Road thickness sweep} (GT fixed at 3px): Road IoU falls from $1.000$ at correct thickness
+to $0.157$ at 21px predicted thickness, while both clDice and DTAF1 stay at $1.000$ through 13px
+and only start softening at very extreme over-thickness --- confirming width-insensitivity holds
+over a wide practical range.
+
+\textbf{Building erosion sweep}: all three metrics degrade together and roughly proportionally
+with erosion radius (Building IoU $1.000{\to}0.203$, BF $1.000{\to}0.512$, DTAF1
+$1.000{\to}0.728$ at radius 11) --- the one scenario where IoU's verdict was never wrong to begin
+with, included as a control.
+
+\subsection{Interpretation via Distance-Transform Geometry}
+\label{subsec:motivation-interpretation}
+
+DTAF1's tolerance radius $d_c$ defines, for every pixel, a disc of admissible positional error: a
+predicted pixel counts as correct if \emph{any} GT pixel of the same class lies within $d_c$, and
+vice versa for recall. This is precisely why width and small-offset errors are absorbed: every
+pixel of an over-thick or slightly-shifted road still has some true road pixel within $d_c$, so
+precision and recall both stay near 1. The same geometry is also precisely why DTAF1 is blind to
+breakage: the tolerance radius has no notion of \emph{which} surviving pixels are connected to
+each other --- it only asks ``is there a same-class pixel nearby,'' a purely local, per-pixel
+question. Random dropout removes pixels roughly uniformly, so even at high dropout fractions the
+\emph{remaining} pixels tend to still lie within $d_c$ of most GT locations, exactly as a spatial
+Poisson-thinning argument would predict: for a road of width $w$ and tolerance $d_c \gg w$, the
+probability that some surviving pixel lies within $d_c$ of a given GT pixel stays high until the
+surviving fraction becomes small relative to $w/d_c$. clDice does encode a \emph{global}
+connectivity signal (via skeletonization), which is why it degrades faster and less evenly than
+DTAF1 under the same dropout sweep --- but clDice's zero-tolerance to any positional offset makes
+it unusable as DTAF1's replacement outright. This tension --- a tolerance radius that must be wide
+enough to absorb positional/width noise but is then necessarily blind to the connectivity question
+at that same radius --- is the structural reason a \emph{separate} connectivity term (APLS,
+Section~\ref{subsec:apls}) is needed rather than simply shrinking $d_c$; Section~\ref{sec:topological}
+develops this formally, and Section~\ref{sec:method} shows the same ``wide enough to absorb noise,
+blind to connectivity'' tradeoff reproduces itself on the training-loss side
+(\texttt{ToleranceBandLoss} has no connectivity term either, by the same design logic).

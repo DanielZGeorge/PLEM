@@ -1,0 +1,110 @@
+\section{Experimental Setup}
+\label{sec:expsetup}
+
+\subsection{Synthetic Benchmark}
+\label{subsec:synthetic-setup}
+
+$128\times128$ scene: vertical road stripe (class 1) + $40\times40$ building rectangle (class 2),
+from \texttt{notebooks/metric\_comparison.ipynb}. The nine sweep functions listed in
+Table~\ref{tab:sweeps} (\texttt{tests/test\_sensitivity.py}).
+
+\subsection{Real-Data Sample}
+\label{subsec:realdata-setup}
+
+SpaceNet SN2 (buildings, $650\times650$px) + SN3 (roads, $1300\times1300$px) from the public
+unauthenticated S3 bucket, cities Vegas/Khartoum/Paris/Shanghai, up to ${\sim}100$ tiles curated,
+the two tiling grids reconciled via coarse-then-dense nearest-neighbor spatial matching, verified
+by rasterized pixel overlap (not just bbox overlap). Plus ISPRS Potsdam (6cm/px) \cite{isprs-potsdam} for the point
+class (trees), 15 crops via a Kaggle mirror, thresholded by palette color + connected-component
+labeled.
+
+No trained extractor was available for most of this evaluation, so ``pred'' $=$ real GT run
+through the same perturbation families as the synthetic sweeps
+(\texttt{notebooks/real\_data\_evaluation.ipynb}), at fixed severities: \texttt{road\_offset}
+$\in\{0,4,8,12,16\}$px, \texttt{road\_dropout}$\in\{0,25,50,75\}\%$,
+\texttt{road\_thicken}$\in\{0,2,4,6\}$px, \texttt{building\_erode}$\in\{0,1,2,3\}$px,
+\texttt{point\_jitter}$\in\{0,3,6,10,15\}$px, \texttt{point\_dropout}$\in\{0,25,50,75,100\}\%$,
+\texttt{point\_clutter}$\in\{0,5,10,15,20\}$ extra blobs.
+
+\subsection{Trained Model (First Real Prediction Source)}
+\label{subsec:trainedmodel-setup}
+
+Small 3-level encoder/decoder U-Net, base$=16$ channels doubling per level, single softmax head
+over $\{\text{bg},\text{road},\text{building}\}$, \textbf{483,475 parameters}. 100 SpaceNet tiles
+split \textbf{70/15/15 at the tile level} (avoids patch-leakage inflating held-out scores),
+patchified to 256px (2520 train / 540 val patches). Loss $=$ class-weighted cross-entropy $+$ soft
+Dice; class weights $[0.1, 1.313, 1.602]$ for (bg, road, building), from pixel counts
+$[147742496, 9565097, 7843127]$. CPU-only, 15 epochs \cite{ronneberger2015unet}. This is the
+frozen CE+Dice \textbf{baseline} referenced by Section~\ref{subsec:joint-setup}'s ablation.
+
+\textbf{Limitation stated explicitly here}: ``${\sim}100$ curated real tiles with no pretraining is
+a small dataset for segmentation; treat as a pipeline sanity check, not a benchmark result.''
+
+\subsection{Loss Ablation Setup}
+\label{subsec:lossablation-setup}
+
+Mirrors Section~\ref{subsec:motivation-setup}'s synthetic-sweep methodology exactly:
+\texttt{tests/test\_loss\_sensitivity.py} imports the same scene builders and perturbed-scene
+generators directly from \texttt{tests/test\_sensitivity.py} (\texttt{SHAPE}, \texttt{make\_road},
+\texttt{make\_building}, \texttt{make\_gt}, \texttt{make\_points}, \texttt{GT},
+\texttt{POINT\_COORDS} --- not duplicated), so every loss-side sweep perturbs the \emph{identical}
+synthetic scene as its eval-metric counterpart. Rather than accuracy, each sweep records
+\textbf{loss value} for a perturbed prediction against the fixed ground truth, encoded as
+``confidently peaked'' logits (softmax $\approx$ one-hot at the perturbed label, but at a
+moderate confidence scale) fed through \texttt{PLEMMultiTaskLoss}, reporting five configurations
+built from its own sub-term breakdown: \texttt{ce\_dice\_only}, \texttt{plus\_tolerance},
+\texttt{plus\_cldice}, \texttt{plus\_heatmap}, \texttt{full}. Seven sweeps mirror seven of the
+nine synthetic families (road offset/breakage/thickness, building erosion, point
+jitter/dropout/clutter --- \texttt{sweep\_class\_imbalance}/\texttt{sweep\_sparse\_class\_offset}
+have no loss-side analog, since they are about how eval-time composite \emph{reductions} behave,
+not a property of one loss term).
+
+\textbf{Methodology note on confidence scale.} The eval-side unit tests
+(Section~\ref{sec:results}, \texttt{tests/test\_losses\_sanity.py}) use a ``fully confident'' logit
+encoding (softmax $\approx 1-10^{-10}$) to test perfect-prediction behavior. The loss-ablation
+sweeps deliberately use a more moderate confidence scale instead (softmax $\approx 0.999$): at
+full confidence, \texttt{PointHeatmapLoss}'s focal-loss log term saturates at its numerical clamp
+ceiling for \emph{every} confidently-wrong pixel, and since each predicted point blob spans
+multiple pixels, a handful of false-positive point predictions can inflate a sweep's total loss by
+roughly two orders of magnitude --- a test-harness artifact of total confidence no real model
+output actually reaches, not a property of the loss itself. This is itself a useful, real finding
+for Section~\ref{subsec:joint-setup}: the heatmap term's absolute magnitude scales differently from
+the other three (a CornerNet-style focal formulation, not a bounded $[0,1]$ ratio the
+tolerance/clDice terms are), motivating \texttt{PLEMMultiTaskLoss}'s per-term \texttt{weights} dict
+for rebalancing during real training.
+
+\subsection{Joint Multi-Source Training Setup}
+\label{subsec:joint-setup}
+
+Neither SpaceNet nor Potsdam alone annotates all three feature types (Section~\ref{subsec:multitask-loss}):
+SpaceNet supplies road+building but no point class; Potsdam's 6-class palette includes
+\texttt{building} and point-capable \texttt{tree}/\texttt{car} classes but no road/linear class at
+all. A genuinely joint 0D/1D/2D training run therefore requires combining both sources under
+\texttt{PLEMMultiTaskLoss}'s masked multi-source scheme. \textbf{The data-side half of this is
+built and validated against real data}: \texttt{datasets/potsdam.py::label\_raster\_to\_building\_mask}
+extracts the \texttt{building} palette color (a straight threshold, deliberately not routed
+through the point pipeline's connected-component + area filter, which would wrongly split/drop
+large contiguous footprints) alongside the existing point extraction, combined by
+\texttt{label\_raster\_to\_multiclass\_mask}; \texttt{build\_potsdam\_sample(extract\_buildings=True)}
+builds this combined cache (\texttt{tile\_potsdam}'s new \texttt{min\_building\_pixels} parameter
+switches its crop-keep test to an OR condition). Run against the real 15-crop Potsdam sample:
+\textbf{14 of 15 cached crops have building coverage, 5 have point instances, 3 have both} ---
+confirming genuinely multiclass (building+point) tiles exist in the cache, not just in principle.
+\texttt{datasets/joint.py} then loads and tags every cached tile from both sources
+(\texttt{SOURCE\_CLASSES = \{"spacenet": [1,2], "potsdam": [2,3]\}}, \texttt{class\_mask\_for\_source()}
+returning the $(4,)$ mask \texttt{PLEMMultiTaskLoss} consumes directly) --- run against the real
+caches: \textbf{123 SpaceNet tiles + 30 Potsdam tiles = 153 tagged tiles}, split 70/15/15 at the
+tile level \emph{independently per source} before concatenating (a single pooled-then-permuted
+split risks starving the smaller Potsdam side, which has only 15 crops, from a split entirely).
+
+SpaceNet and Potsdam are not resampled to a common ground sample distance (SpaceNet
+${\sim}0.3$--$0.5$ m/px vs.\ Potsdam's 6 cm/px) --- each source is patchified independently to the
+same $256\times256$ \emph{pixel} patch size, accepting that a Potsdam patch covers a much smaller
+physical area than a SpaceNet patch; stated as an explicit, known limitation
+(Section~\ref{sec:discussion}) rather than silently glossed over. The resulting model is evaluated
+with \texttt{evaluate\_all(..., point\_classes=[3])} --- the first end-to-end exercise of
+\texttt{evaluate\_all()}'s \texttt{point\_classes} argument on a real trained model's output ---
+and compared against Section~\ref{subsec:trainedmodel-setup}'s frozen CE+Dice baseline on the
+SpaceNet-only classes/tiles they share, framed honestly as a \textbf{pipeline sanity check},
+matching Section~\ref{subsec:trainedmodel-setup}'s own framing, not a benchmark-scale ablation
+study.

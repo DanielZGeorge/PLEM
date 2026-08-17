@@ -1,0 +1,58 @@
+\section{Conclusion \& Future Work}
+\label{sec:conclusion}
+
+This paper makes two contributions that reinforce each other. The evaluation half
+(Sections~\ref{sec:evalprotocol}--\ref{sec:topological}) is a class-agnostic, tolerance/topology-aware
+metric library that found and fixed two real failure modes through an explicit
+synthetic-sweep $\to$ real-data validation $\to$ targeted additive fix $\to$ regression-test loop.
+The training half (Section~\ref{sec:method}) asks whether the same geometric properties that
+motivate those metrics can be trained \emph{into} a model directly, rather than only measured
+afterward: \texttt{PLEMMultiTaskLoss} combines three differentiable analogs of those metrics
+(tolerance, topology, and --- via a genuine reformulation rather than a relaxation ---
+point-instance localization) into one multi-task loss, with a masked multi-source training scheme
+letting datasets that individually annotate only two of three feature types jointly supervise one
+4-class model. Section~\ref{subsec:lossablation-results}'s synthetic ablations confirm each term
+encodes the geometric sensitivity it was designed to; Section~\ref{subsec:joint-results}'s small
+real joint-training run across 153 real tiles confirms the mechanism holds together end-to-end on
+real, messy imagery --- all four loss terms learn jointly, per-source masking behaves correctly,
+and point-feature evaluation flows all the way through the metric library on a real trained
+model's output for the first time --- the same posture Section~\ref{subsec:trainedmodel-setup}'s
+original CE+Dice U-Net took toward the evaluation metrics themselves. Whether the new loss
+\emph{improves on} CE+Dice, as opposed to merely working correctly, remains open pending an
+epoch-matched comparison (below).
+
+Future work:
+\begin{itemize}
+  \item Run an epoch-matched (or otherwise fairly controlled) comparison between the CE+Dice
+    baseline and the new joint loss (highest priority ---
+    Section~\ref{subsec:joint-results}'s 2-epoch run cannot separate ``the new loss is worse''
+    from ``2 epochs on a harder task is worse,'' and every other item below benefits from having
+    that real comparison to react to).
+  \item Wire \texttt{dtaf1\_topo} into \texttt{evaluate\_all()} and \texttt{metrics/\_\_init\_\_.py}
+    after real-data validation (Section~\ref{subsec:realdata-results}'s Finding \#1,
+    Section~\ref{sec:discussion}).
+  \item Re-run \texttt{dtaf1\_topo}/\texttt{apls} on the real 24-tile SpaceNet sample already used
+    for every other real-data finding, closing the ``synthetic-only'' caveat in
+    Sections~\ref{subsec:dtaf1topo}/\ref{sec:discussion}.
+  \item Train on the full SpaceNet corpus with GPU/pretraining
+    (Sections~\ref{subsec:trainedmodel-setup}/\ref{subsec:unet-results}), and correspondingly
+    scale up the joint training run beyond a pipeline sanity check once its basic mechanics are
+    confirmed.
+  \item Extend the point-feature pipeline (both eval, Section~\ref{subsec:pointf1}, and training,
+    Section~\ref{subsec:heatmap-loss}) to more Potsdam classes (cars).
+  \item Explore learned/adaptive tolerance radii instead of fixed per-class constants
+    (Section~\ref{subsec:tolerance-radii}), and correspondingly a learned rather than fixed
+    \texttt{iters} for \texttt{SoftClDiceLoss} (Section~\ref{subsec:cldice-loss}).
+  \item Characterize DTAF1-Topo's inherited APLS failure modes on short/sparse real road segments
+    (Section~\ref{sec:discussion}'s last point) with a dedicated sensitivity sweep, mirroring
+    \texttt{sweep\_sparse\_class\_offset}'s treatment of CBHM's analogous weakness
+    (Section~\ref{subsec:class-imbalance}).
+  \item Empirically tune \texttt{PLEMMultiTaskLoss}'s per-term \texttt{weights} dict
+    (Section~\ref{sec:discussion}) once real training results are available to optimize against,
+    rather than the default equal weighting used for the ablations in
+    Section~\ref{subsec:lossablation-results}.
+  \item Investigate whether \texttt{SoftClDiceLoss} alone provides meaningful indirect
+    connectivity pressure during training (Section~\ref{sec:discussion}), as a cheaper partial
+    substitute for the connectivity term \texttt{losses/} otherwise cannot have
+    (Sections~\ref{subsec:apls}/\ref{subsec:method-principle}).
+\end{itemize}

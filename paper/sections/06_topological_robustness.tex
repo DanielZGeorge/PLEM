@@ -1,0 +1,112 @@
+\section{Analysis and Design for Topological Robustness}
+\label{sec:topological}
+
+A structural property the primitive lacks, a sensitivity analysis, then a closed-form-plus-numerical
+design section.
+
+\subsection{The Connectivity Blind Spot}
+\label{subsec:blindspot}
+
+This subsection formally states a property DTAF1 \textbf{lacks}: pointwise EDT tolerance-matching
+is not ``connectivity-injective.'' Concretely (proof sketch; full statement in
+Appendix~\ref{app:proofs}):
+
+\begin{quote}
+For a road mask $G_c$ of width $w$ and tolerance $d_c$, there exist predicted masks $P_c$ obtained
+from $G_c$ by deleting an arbitrarily large fraction of pixels --- up to and including masks in
+which $G_c$'s connected skeleton is fully disconnected into many isolated fragments --- such that
+$\mathrm{DTAF1}_c(P_c, G_c) = 1.0$, provided the surviving pixels remain within $d_c$ of every GT
+pixel.
+\end{quote}
+
+Section~\ref{subsec:motivation-results}'s road-breakage sweep is the empirical witness: DTAF1
+stays at exactly $1.000$ through 90\% random dropout on the synthetic scene.
+
+\subsection{APLS as Connectivity Recovery, and Its Sensitivity to Fragmentation}
+\label{subsec:apls-recovery}
+
+APLS (Section~\ref{subsec:apls}) recovers exactly the signal DTAF1 lacks: its score depends on
+shortest-path length \emph{between} control points, not merely on point-to-point proximity, so it
+is sensitive to whether a path exists at all. Framing the dropout fraction as the ``noise'' axis,
+the empirical curve has a two-regime character: a near-flat, low-sensitivity regime while the
+skeleton is still mostly connected, followed by a sharp departure once fragmentation actually
+occurs (Table~\ref{tab:breakage-topo}).
+
+\begin{table}
+  \caption{Road-breakage sweep: DTAF1 vs.\ CBHM vs.\ APLS vs.\ DTAF1-Topo.}
+  \label{tab:breakage-topo}
+  \begin{tabular}{@{}lcccc@{}}
+    \toprule
+    Dropout & \texttt{dtaf1} & \texttt{cbhm} & \texttt{road\_apls} & \texttt{dtaf1\_topo} \\
+    \midrule
+    0.0 & 1.000 & 1.000 & 1.000 & 1.000 \\
+    0.1 & 1.000 & 0.965 & 0.898 & 0.946 \\
+    0.2 & 1.000 & 0.919 & 0.883 & 0.938 \\
+    0.3 & 1.000 & 0.909 & \textbf{0.247} & \textbf{0.397} \\
+    0.5 & 1.000 & 0.805 & 0.029 & 0.057 \\
+    0.7 & 1.000 & 0.606 & 0.005 & 0.010 \\
+    1.0 & 0.500 & 0.000 & 0.000 & 0.000 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The transition is sharp between 0.2 and 0.3: \texttt{road\_apls} falls from $0.883$ to $0.247$ in
+that one step --- the point at which the road skeleton's largest connected fragment actually
+detaches from enough control-point pairs that shortest paths start disappearing rather than merely
+lengthening. \texttt{dtaf1} shows no analogous transition anywhere in the swept range.
+
+\subsection{Harmonic-Blending Design for DTAF1-Topo}
+\label{subsec:dtaf1topo}
+
+\begin{lstlisting}[language=Python, caption={Blending primitive, \texttt{metrics/dtaf1\_topo.py:29-31,74-87}}]
+def _harmonic_mean(a, b):
+    denom = a + b
+    return float(2 * a * b / denom) if denom > 0 else 0.0
+
+# per class in linear_classes:
+entry["blended"] = _harmonic_mean(base["f1"], a)  # a = apls
+# non-linear classes keep entry["blended"] = base["f1"]
+\end{lstlisting}
+
+\subsubsection{Closed-Form Boundary Behavior}
+
+The harmonic mean of $F1$ and $\mathrm{APLS}$ has a simple, exactly-analyzable shape at its
+boundaries:
+\begin{itemize}
+  \item $\mathrm{APLS}=0, F1=1$ (the DTAF1 blind-spot regime, worst case): $\mathrm{blended}=0$. A
+    perfectly tolerance-matched but fully disconnected road scores exactly zero once blended,
+    regardless of how high $F1$ is.
+  \item $\mathrm{APLS}=1, F1=1$: $\mathrm{blended}=1$, recovering DTAF1's own perfect score
+    unchanged.
+  \item For fixed $F1=1$, $\mathrm{blended}(\mathrm{APLS}) = 2\mathrm{APLS}/(1+\mathrm{APLS})$ ---
+    concave and always $\le \mathrm{APLS}$, meaning the harmonic blend never \emph{rewards}
+    connectivity beyond what APLS itself reports; it can only ever penalize a
+    topologically-correct-looking $F1$ down toward the (generally lower) APLS score, never the
+    reverse. This asymmetry is intentional: it is the mechanism by which DTAF1-Topo closes the
+    blind spot rather than merely averaging two independent opinions.
+\end{itemize}
+
+\subsubsection{Numerical Validation via the Road-Breakage Sweep}
+
+Unlike the closed-form boundary analysis above, the \emph{practical} question --- where along the
+dropout axis does the blend actually diverge from plain DTAF1? --- has no closed form and is
+answered numerically. Table~\ref{tab:breakage-topo} already gives the answer directly:
+\texttt{dtaf1\_topo} tracks \texttt{road\_apls} closely (both driven to near-zero by fraction
+0.5--0.7) while \texttt{dtaf1} stays at $1.000$ throughout --- this \emph{is} the fix, cross-checked
+against the assertions in \texttt{tests/test\_metrics\_sanity.py::TestRoadBreakageRegression}.
+\textbf{Validated on synthetic data only} --- see Section~\ref{sec:discussion} for the real-data
+caveat.
+
+\medskip
+\noindent\textbf{Bridge to Section~\ref{sec:method}.} Every property analyzed so far --- offset
+tolerance (Section~\ref{subsec:dtaf1}), width insensitivity (Section~\ref{subsec:cldice}),
+connectivity/breakage sensitivity (this section), instance-level point matching
+(Section~\ref{subsec:pointf1}) --- was developed purely as an \emph{evaluation} concern: a
+property a \emph{finished} prediction is scored against, after training is already done.
+Section~\ref{sec:method} asks the natural next question: if these are the geometric properties
+that actually distinguish a good extraction from a bad one, why train a model with a loss that has
+no notion of any of them? The three tractable properties (tolerance, width-insensitivity via
+topology, point-instance-like localization) are exactly the three \texttt{losses/} implements as
+differentiable training terms; the one property with no tractable differentiable relaxation (graph
+connectivity, this section) is exactly the one \texttt{losses/} leaves out, by design, not
+oversight.

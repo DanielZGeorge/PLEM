@@ -1,0 +1,61 @@
+\section{Related Work}
+\label{sec:related}
+
+\emph{Draft later --- scaffold only.} Each subsection below is left as a scaffold with a named
+citation target, so prose can be dropped in without restructuring.
+
+\subsection{IoU-family segmentation metrics}
+The region-overlap baseline this paper argues against for linear features; standard
+semantic-segmentation benchmarks (Cityscapes, PASCAL VOC) as the incumbent evaluation convention.
+
+\subsection{Topology-/skeleton-aware metrics for linear structures}
+clDice and related centerline methods. Citation target: Shit et~al., CVPR 2021
+\cite{shit2021cldice}.
+
+\subsection{Boundary-based metrics for polygonal features}
+Boundary F1 / BF score. Citation target: Csurka et~al., BMVC 2013 \cite{csurka2013evaluation}.
+
+\subsection{Road-network extraction and connectivity metrics}
+APLS, TOPO, and the SpaceNet road-extraction challenge line of work that motivates
+Sections~\ref{subsec:apls} and~\ref{sec:topological}. Citation target: the SpaceNet APLS metric
+definition \cite{spacenet-apls}.
+
+\subsection{Point/instance detection metrics}
+COCO-style average precision, and the optimal bipartite-matching literature underlying
+\texttt{point\_f1}'s Hungarian assignment. Citation target: Kuhn, 1955 (the Hungarian algorithm)
+\cite{kuhn1955hungarian}.
+
+\subsection{Composite/multi-task segmentation evaluation}
+Positions the gap PLEM's \emph{evaluation} half fills: existing work evaluates linear and
+polygonal feature types with separate, non-comparable metrics rather than a single class-agnostic
+formula (DTAF1) plus a deliberately harsh cross-type composite (CBHM).
+
+\subsection{Differentiable segmentation losses}
+\label{subsec:related-losses}
+The training-side analog of the gap the previous subsection describes on the eval side. Standard
+multiclass segmentation losses (cross-entropy, soft Dice --- citation target: Milletari et~al.,
+3DV 2016, ``V-Net'' \cite{milletari2016vnet}) are geometry-agnostic in exactly the sense
+Section~\ref{sec:intro} argues IoU is: no notion of positional tolerance, centerline topology, or
+point-instance identity. Three prior lines of work each address one of those properties in
+isolation, none jointly:
+\begin{enumerate}
+  \item \textbf{Boundary-/Hausdorff-distance losses}, which precompute a GT-side distance
+    transform and use it as a fixed per-pixel weight against the model's soft output --- citation
+    targets: Kervadec et~al., 2019 (``Boundary loss for highly unbalanced segmentation'')
+    \cite{kervadec2019boundary}; Karimi \& Salcudean, 2019 (Hausdorff-distance loss)
+    \cite{karimi2019hausdorff} --- the direct precedent for Section~\ref{subsec:tolerance-loss}'s
+    soft tolerance-band term.
+  \item \textbf{Soft-clDice}, a differentiable soft-skeletonization loss for tubular structures ---
+    citation target: Shit et~al., CVPR 2021 \cite{shit2021cldice} (the same paper cited for clDice
+    itself in Section~\ref{subsec:cldice} --- here cited for its \emph{loss}, not its eval metric,
+    contribution) --- the direct precedent for Section~\ref{subsec:cldice-loss}.
+  \item \textbf{Heatmap regression for keypoint/point detection}, which reformulates discrete
+    point detection as dense Gaussian-target regression rather than an instance-matching problem
+    --- citation targets: Law \& Deng, ECCV 2018 (``CornerNet'') \cite{law2018cornernet};
+    Zhou et~al., 2019 (``CenterNet''/``Objects as Points'') \cite{zhou2019centernet} --- the
+    direct precedent for Section~\ref{subsec:heatmap-loss}.
+\end{enumerate}
+Section~\ref{sec:method}'s contribution is combining well-precedented individual relaxations of
+(1)--(3) into one multi-task loss covering all three geometric properties simultaneously, plus the
+masked multi-source training scheme (Section~\ref{subsec:multitask-loss}) that lets two datasets
+which individually annotate only two of the three feature types jointly supervise one model.

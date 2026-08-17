@@ -1,0 +1,88 @@
+\section{Discussion \& Limitations}
+\label{sec:discussion}
+
+\begin{itemize}
+  \item DTAF1's road-breakage blind spot (Sections~\ref{subsec:motivation-results},
+    \ref{subsec:blindspot}) is fixed by DTAF1-Topo (Section~\ref{subsec:dtaf1topo}), but
+    DTAF1-Topo is validated on \textbf{synthetic data only} --- not yet re-run on the real 24-tile
+    sample (Section~\ref{subsec:realdata-results}'s Finding \#1), and not yet wired into
+    \texttt{evaluate\_all()}.
+  \item \texttt{cbhm\_soft} (Section~\ref{subsec:weighted-reduction}) only helps when the failing
+    class is also the pixel-count minority; when a class sparse by \emph{area} is not sparse by
+    \emph{pixel count} (\texttt{Khartoum\_img371}), the fix is partial.
+  \item clDice is brittle on short/sparse real road segments --- moderate offsets can collapse it
+    to exactly 0 even when DTAF1 degrades gracefully. Neither composite is uniformly more
+    trustworthy --- recommend reporting \texttt{cbhm}, \texttt{cbhm\_soft}, \texttt{dtaf1}, and
+    \texttt{dtaf1\_weighted} together, not picking one.
+  \item U-Net results (Section~\ref{subsec:unet-results}) are a pipeline sanity check (small
+    dataset, no pretraining, CPU-only), not a benchmark result --- do not oversell.
+  \item APLS (Section~\ref{subsec:apls}) here is a raster-skeleton approximation, not true
+    vector-graph APLS, because no vector road graph survives the \texttt{rasterize\_lines} step
+    anywhere in the pipeline (Section~\ref{sec:implementation}).
+  \item The harmonic-blend asymmetry proved in Section~\ref{subsec:dtaf1topo} (DTAF1-Topo can only
+    ever pull a score \emph{down} toward APLS, never up) is intentional, but means DTAF1-Topo
+    inherits every one of APLS's own failure modes (e.g., a genuinely correct but very
+    short/sparse road segment with too few sampled control-point pairs to estimate APLS reliably)
+    --- not yet characterized empirically.
+  \item \textbf{\texttt{losses/} has no connectivity term, by design, not oversight.}
+    APLS/DTAF1-Topo have no tractable lightweight differentiable relaxation --- graph shortest-path
+    recomputation over a fragmenting skeleton graph has no obvious continuous relaxation without
+    essentially reinventing a differentiable flow/graph formulation, a substantially larger
+    undertaking than the other three terms. A model trained with \texttt{PLEMMultiTaskLoss}
+    therefore has no direct training pressure toward connectivity, only toward tolerance-band
+    coverage and centerline topology at \texttt{SoftClDiceLoss}'s fixed-iteration granularity ---
+    it may still learn to produce broken roads that happen to look locally correct, exactly the
+    failure mode Section~\ref{subsec:blindspot} formalizes on the eval side. Whether
+    \texttt{SoftClDiceLoss} alone provides enough indirect connectivity pressure in practice is an
+    open empirical question for Section~\ref{subsec:joint-results}'s real training run.
+  \item \textbf{\texttt{PointHeatmapLoss} is a genuine train/eval formulation mismatch, not a
+    relaxation.} Point F1 (Section~\ref{subsec:pointf1}) is evaluated via Hungarian instance
+    matching at test time but trained via dense heatmap regression
+    (Section~\ref{subsec:heatmap-loss}) --- these are different algorithms with different failure
+    modes, so a model minimizing the heatmap loss is not directly minimizing anything Point F1
+    measures, only something correlated with it. This mismatch is inherent to point supervision
+    (Section~\ref{sec:method}'s assessment found no tractable differentiable relaxation of
+    Hungarian matching itself), not a shortcut taken for convenience.
+  \item \textbf{The tolerance-band recall direction turned out fully differentiable, not merely
+    approximated.} Initial design assessment (before implementation) expected the recall direction
+    would need a detached/stop-gradient hard-threshold approximation, mirroring how a real
+    Euclidean distance transform of the prediction would break differentiability. Implementation
+    found a cleaner alternative --- soft-dilating the model's own continuous probability map via
+    differentiable max-pool --- that avoids any detach at all (Section~\ref{subsec:tolerance-loss}).
+    Recorded here because it contradicts what a reader familiar with the boundary-loss literature
+    (Section~\ref{subsec:related-losses}) might expect from this term specifically.
+  \item \textbf{The heatmap term's loss magnitude differs from the other three by orders of
+    magnitude} under point perturbations (Sections~\ref{subsec:lossablation-setup},
+    \ref{subsec:lossablation-results}) --- a real, documented property of its CornerNet-style
+    focal formulation (not a bounded $[0,1]$ ratio the way the tolerance/clDice terms are), not a
+    bug. \texttt{PLEMMultiTaskLoss}'s per-term \texttt{weights} dict exists specifically to
+    rebalance this during real training (Section~\ref{subsec:joint-setup}); the right weighting
+    has not yet been empirically tuned.
+  \item \textbf{SpaceNet/Potsdam are not resampled to a common GSD}
+    (Section~\ref{subsec:joint-setup}) --- a Potsdam training patch covers a much smaller physical
+    area than a SpaceNet patch at the same pixel size. Section~\ref{subsec:joint-results}'s run did
+    not surface an obvious failure mode from this (no qualitative evidence the model confuses the
+    two regimes), but a rigorous test of whether it matters would need an ablation isolating GSD
+    from every other confound, not yet run.
+  \item \textbf{Section~\ref{subsec:joint-results}'s real training run cannot separate ``the new
+    loss underperforms'' from ``2 epochs on a harder task underperforms.''} Its SpaceNet-only
+    aggregate scores ($\mathrm{cbhm}=0.144$, $\mathrm{dtaf1}=0.304$) come in below the CE+Dice
+    baseline's 15-epoch numbers ($\mathrm{cbhm}=0.316$, $\mathrm{dtaf1}=0.440$,
+    Section~\ref{subsec:unet-results}), but the joint run trained for 2 epochs (an explicit,
+    CPU-only-time-budget scope choice) against a strictly harder task (4-class head, four combined
+    loss terms, a second heterogeneous data source contributing under 1\% of training patches). No
+    epoch-matched comparison exists yet --- treat the current numbers as evidence the pipeline runs
+    correctly end-to-end, not as a verdict on the new loss's quality relative to CE+Dice; the
+    highest-priority future-work item (Section~\ref{sec:conclusion}) is closing this gap.
+  \item \textbf{A pathological-scaling guard was added to \texttt{gt\_centroids\_to\_heatmap} during
+    this pipeline's integration testing}: profiling the real joint-training run surfaced that a
+    synthetic worst-case target (dense, non-blob-like point-class noise, never produced by real
+    Potsdam labels) could drive the per-centroid Python loop underlying the heatmap target
+    construction to thousands of connected components, stalling a single training batch for
+    minutes. A \texttt{max\_instances} cap (default 100 --- generous relative to real Potsdam
+    crops, which top out around two dozen instances per tile) bounds this worst case with a
+    one-time warning rather than a silent multi-minute stall, at the cost of dropping excess
+    instances beyond the cap on malformed input. Recorded here as a concrete instance of the more
+    general caution in Section~\ref{subsec:heatmap-loss}: this term's cost scales with instance
+    \emph{count}, not just image size, unlike the other three terms.
+\end{itemize}

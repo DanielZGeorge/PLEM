@@ -1,0 +1,94 @@
+\documentclass[sigconf]{acmart}
+
+\AtBeginDocument{%
+  \providecommand\BibTeX{{\normalfont B\kern-0.5em{\scshape i\kern-0.25em b}\kern-0.25em T\kern-0.1667em\lower.7ex\hbox{E}\kern-0.125emX}}
+}
+
+%% Bibliography style/data
+\bibliographystyle{ACM-Reference-Format}
+\citestyle{acmauthoryear}
+
+%% Listings for inline code snippets (Python/formula excerpts from the codebase)
+\usepackage{listings}
+\usepackage{xcolor}
+\lstdefinestyle{plem}{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  columns=fullflexible,
+  keywordstyle=\color{blue!60!black},
+  commentstyle=\color{gray},
+  showstringspaces=false,
+  frame=single,
+  framesep=3pt,
+  xleftmargin=3pt,
+  xrightmargin=3pt,
+}
+\lstset{style=plem}
+
+\usepackage{booktabs}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+
+%% Copyright/rights block -- placeholder values, fill in at submission time.
+\setcopyright{acmlicensed}
+\copyrightyear{2026}
+\acmYear{2026}
+\acmDOI{10.1145/XXXXXXX.XXXXXXX}
+
+\acmConference[SIGSPATIAL '26]{The 34th ACM SIGSPATIAL International Conference on Advances in Geographic Information Systems}{November 3--6, 2026}{Riverside, CA, USA}
+\acmBooktitle{The 34th ACM SIGSPATIAL International Conference on Advances in Geographic Information Systems (SIGSPATIAL '26), November 3--6, 2026, Riverside, CA, USA}
+\acmISBN{978-1-4503-XXXX-X/26/11}
+
+\begin{document}
+
+\title{PLEM: Polygonal Linear Evaluation Metric}
+\subtitle{Evaluation Metrics and a Differentiable Training Loss for Joint Point, Linear, and Polygonal Map Feature Extraction}
+
+\author{Daniel George}
+\email{dzgeorge@usc.edu}
+\affiliation{%
+  \institution{University of Southern California, Viterbi School of Engineering}
+  \city{Los Angeles}
+  \state{CA}
+  \country{USA}
+}
+
+\author{John Krumm}
+\email{jkrumm@usc.edu}
+\affiliation{%
+  \institution{University of Southern California, Viterbi School of Engineering}
+  \city{Los Angeles}
+  \state{CA}
+  \country{USA}
+}
+
+\input{sections/00_abstract}
+
+\maketitle
+
+\input{sections/01_introduction}
+\input{sections/02_related_work}
+\input{sections/03_evaluation_protocol}
+\input{sections/04_empirical_motivation}
+\input{sections/05_composite_robustness}
+\input{sections/06_topological_robustness}
+\input{sections/07_method_losses}
+\input{sections/08_implementation}
+\input{sections/09_experimental_setup}
+\input{sections/10_results}
+\input{sections/11_discussion}
+\input{sections/12_conclusion}
+
+\begin{acks}
+Parts of the implementation, notebooks, and the working outline behind this paper were developed
+with the assistance of Claude Code, and were checked and are the responsibility of the author(s).
+\end{acks}
+
+\bibliography{refs}
+
+\appendix
+\input{appendix/appendix_a_proofs}
+\input{appendix/appendix_b_complexity}
+
+\end{document}

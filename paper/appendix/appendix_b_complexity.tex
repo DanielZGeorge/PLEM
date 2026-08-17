@@ -1,0 +1,118 @@
+\section{Algorithms and Computational Complexity}
+\label{app:complexity}
+
+One subsection per Section~\ref{sec:evalprotocol} primitive gives its per-primitive computational
+complexity. Sections~\ref{app:b8}--\ref{app:b12} extend this to the four \texttt{losses/} terms
+from Section~\ref{sec:method}, on the same basis: cost per forward pass on one batch of $H\times W$
+tiles, in the same $N$/$k$ notation as Section~\ref{app:b1}.
+
+\subsection{General Framework and Notation}
+\label{app:b1}
+
+Let $N=H\times W$ be the pixel count of one tile, and (where relevant) $k$ the number of
+point-class instances in a scene (typically tens to low hundreds, $k \ll N$). For
+Sections~\ref{app:b8}--\ref{app:b12}, $B$ is batch size and $\mathrm{iters}$ is a loss term's
+fixed iteration count.
+
+\subsection{DTAF1}
+\label{app:b2}
+Two calls to \texttt{scipy.ndimage.distance\_transform\_edt}, each $O(N)$ (the exact Euclidean
+distance transform algorithm used by SciPy runs in linear time via a two-pass separable
+algorithm); TP/precision/recall computation is a constant number of $O(N)$ boolean-mask
+reductions. Total per class: $O(N)$.
+
+\subsection{clDice}
+\label{app:b3}
+\texttt{skimage.morphology.skeletonize} (Lee's thinning algorithm) is near-linear in $N$; the
+subsequent set intersections are $O(N)$. Total per class: $O(N)$.
+
+\subsection{Boundary F1}
+\label{app:b4}
+Morphological boundary extraction (\texttt{binary\_dilation} with a small structuring element) is
+$O(N)$; two \texttt{distance\_transform\_edt} calls are $O(N)$ each as in Section~\ref{app:b2}.
+Total per class: $O(N)$.
+
+\subsection{Point F1}
+\label{app:b5}
+Connected-component labeling (\texttt{scipy.ndimage.label}) is $O(N)$. The subsequent Hungarian
+assignment (\texttt{linear\_sum\_assignment}) operates on a $k\times k$ cost matrix and runs in
+$O(k^3)$ --- cheap in practice since $k$ is an \emph{instance} count, not a pixel count, making
+this the one primitive in the library whose dominant cost term is independent of $N$ for
+realistic point-class densities.
+
+\subsection{APLS}
+\label{app:b6}
+Skeletonization is $O(N)$ as in Section~\ref{app:b3}; building the 8-connected adjacency graph is
+a single pass over skeleton pixels, $O(N)$. Control-point pairs are sampled grouped by source
+specifically so that \texttt{nx.single\_source\_dijkstra\_path\_length} --- run once per unique
+sampled source at $O((V+E)\log V)$ where $V,E$ are the skeleton graph's node/edge counts --- is
+amortized across many targets per source rather than paying one independent Dijkstra call each per
+sampled \emph{pair}. With $n_{\mathrm{pairs}}$ total pairs grouped into $O(\sqrt{n_{\mathrm{pairs}}})$
+sources (the default sampling policy), this reduces total Dijkstra work from
+$O(n_{\mathrm{pairs}} \cdot (V+E)\log V)$ (naive) to $O(\sqrt{n_{\mathrm{pairs}}} \cdot (V+E)\log V)$.
+cKDTree snap-matching is $O(\log V)$ per query after an $O(V\log V)$ tree build.
+
+\subsection{DTAF1-Topo / \texttt{cbhm\_soft}}
+\label{app:b7}
+Both composites add no new asymptotic cost beyond summing their already-analyzed constituent
+primitives' costs: DTAF1-Topo is \texttt{dtaf1()} ($O(N)$ per class, Section~\ref{app:b2}) plus
+\texttt{apls\_multiclass()} (Section~\ref{app:b6}) plus an $O(|\mathrm{linear\_classes}|)$
+harmonic-mean blending pass --- no additional raster-level work. \texttt{cbhm\_soft} is a handful
+of extra $O(1)$-per-class weighted-sum arithmetic operations on scores CBHM already computes ---
+strictly cheaper than either primitive it reweights.
+
+\subsection{\texttt{ToleranceBandLoss}}
+\label{app:b8}
+The GT-side dilation-by-radius is $O(\mathrm{radius} \cdot B N)$: $\mathrm{radius}$ sequential
+$3\times3$ max-pool passes, each $O(BN)$. The recall direction's soft-dilation of the prediction is
+the identical operation applied to a continuous tensor instead of a binary one, same
+$O(\mathrm{radius} \cdot BN)$ cost. Precision/recall ratio computation is $O(BN)$ per class. Total
+per class: $O(\mathrm{radius} \cdot BN)$ --- in the same $O(N)$-per-tile family as DTAF1
+(Section~\ref{app:b2}), with $\mathrm{radius}$ (typically 2--10, Section~\ref{subsec:tolerance-radii})
+as a small constant multiplier, and cheaper per-call in practice than DTAF1's exact Euclidean
+distance transform (Section~\ref{app:b2}'s two-pass separable algorithm has a larger constant
+factor than repeated $3\times3$ max-pooling for the tolerance radii actually used in this paper).
+
+\subsection{\texttt{SoftBoundaryLoss}}
+\label{app:b9}
+The morphological-gradient boundary map is two $3\times3$ pooling passes, $O(BN)$. The remainder
+of the computation is exactly \texttt{ToleranceBandLoss}'s primitive (Section~\ref{app:b8})
+applied to this boundary map instead of the full class mask, so total per class:
+$O(\mathrm{radius} \cdot BN)$, identical complexity family to Section~\ref{app:b8} with a small
+constant-factor overhead for the boundary-map computation itself.
+
+\subsection{\texttt{SoftClDiceLoss}}
+\label{app:b10}
+Each soft-erode/soft-dilate/soft-open call is one $3\times3$ pooling pass, $O(BN)$; soft
+skeletonization performs $\mathrm{iters}$ such passes (default $\mathrm{iters}=10$), so
+skeletonization is $O(\mathrm{iters} \cdot BN)$. This runs once for the prediction and once for GT
+(the GT skeletonization is computed under \texttt{no\_grad}, but has the same forward-pass cost).
+The $\mathrm{tprec}$/$\mathrm{tsens}$ ratio computation is $O(BN)$ per class. Total per class:
+$O(\mathrm{iters} \cdot BN)$ --- same asymptotic family as Section~\ref{app:b3}'s near-linear
+\texttt{skimage.skeletonize}, with $\mathrm{iters}$ playing the role of Section~\ref{app:b3}'s
+(implicit, converge-to-completion) iteration count, except fixed rather than input-dependent ---
+the direct computational reason for Section~\ref{subsec:cldice-loss}'s iteration-bounded
+width-invariance limitation.
+
+\subsection{\texttt{PointHeatmapLoss}}
+\label{app:b11}
+Target construction (\texttt{gt\_centroids\_to\_heatmap}) is $O(N)$ per sample for the
+Gaussian-burn step plus \texttt{scipy.ndimage.label} + \texttt{center\_of\_mass}'s $O(N)$
+connected-component pass (identical cost profile to Section~\ref{app:b5}'s centroid extraction,
+here used for target construction rather than eval-time matching) --- no $O(k^3)$ Hungarian term,
+since this loss performs no assignment at all (Section~\ref{subsec:heatmap-loss}). More precisely,
+the per-centroid Gaussian-burn loop is $O(k' \cdot N)$ where $k'$ is the (capped, see
+Section~\ref{sec:discussion}) number of connected components in that sample --- realistic
+point-feature data keeps $k' \ll N$, but this is the one \texttt{losses/} term whose cost scales
+with instance \emph{count} rather than purely with image size, unlike
+Sections~\ref{app:b8}--\ref{app:b10}. \texttt{heatmap\_focal\_loss} itself is $O(BN)$, a constant
+number of pointwise tensor operations.
+
+\subsection{\texttt{PLEMMultiTaskLoss}}
+\label{app:b12}
+No new asymptotic cost beyond summing Sections~\ref{app:b8}--\ref{app:b11}'s already-analyzed
+constituent costs plus the base CE+Dice term ($O(BN)$, standard cross-entropy and soft-Dice
+computation) --- the pre-softmax class-masking step is a single $O(BC)$-broadcast addition,
+negligible next to any of the per-pixel terms. Total: $O(\mathrm{iters} \cdot BN + k' N)$,
+typically dominated by \texttt{SoftClDiceLoss}'s iteration-bounded skeletonization
+(Section~\ref{app:b10}) unless a sample's point-instance count $k'$ is unusually large.

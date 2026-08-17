@@ -1,0 +1,110 @@
+\section{Introduction}
+\label{sec:intro}
+
+Segmentation maps of overhead imagery routinely mix feature types with fundamentally different
+geometry: \emph{linear} features such as roads, one-dimensional structures extruded to a small
+width; \emph{polygonal} features such as building footprints, genuinely two-dimensional regions;
+and optionally \emph{point} features --- trees, lamp posts, manhole covers --- small discrete
+objects spanning only a handful of pixels. A single evaluation tile covering a city block can
+legitimately contain all three. Yet the standard tool for scoring segmentation quality, pixel IoU,
+treats every class identically as a region-overlap problem, and that assumption breaks down
+specifically for the linear case: because a road is only a few pixels wide, IoU denominators are
+dominated by exactly the pixels most sensitive to sub-pixel-scale registration noise, centerline
+jitter, and predicted-width error, none of which reflect whether the road network was actually
+extracted correctly. The same problem recurs one level up: the \emph{training} losses
+conventionally used for multiclass segmentation (cross-entropy, soft Dice) are exactly as
+geometry-agnostic as IoU is as an evaluation tool --- they have no notion of tolerance, centerline
+topology, or point-instance identity either, so a model trained with them has no direct pressure to
+get those properties right, only to match pixels.
+
+Table~\ref{tab:failure-modes} previews five concrete scenarios on a controlled $128\times128$
+synthetic scene (a 3px-wide vertical road stripe plus a $40\times40$ building rectangle; full
+setup in Section~\ref{sec:motivation}), with values computed directly against the live metrics
+library for this paper. It shows where IoU's verdict diverges from actual prediction quality, and
+--- importantly --- a case where \textbf{DTAF1 itself is fooled} even though it was designed to
+fix IoU's problem: at 33\% random road-pixel deletion, DTAF1 still reports a perfect
+$\mathbf{1.000}$, motivating DTAF1-Topo in Section~\ref{sec:topological}.
+
+\begin{table*}
+  \caption{IoU and DTAF1 failure modes for linear and polygonal features.}
+  \label{tab:failure-modes}
+  \begin{tabular}{@{}lccccc l@{}}
+    \toprule
+    Scenario & Road IoU & clDice & DTAF1 & CBHM & CBHM-soft & Correct read \\
+    \midrule
+    Perfect prediction & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 & baseline \\
+    Road shifted 5px & 0.000 & 0.000 & \textbf{1.000} & 0.000 & 0.806 &
+      centerline correct; IoU/CBHM wrongly fail it \\
+    Road $3.3\times$ too thick (10px vs.\ 3px GT) & 0.281 & 1.000 & 1.000 & 1.000 & 1.000 &
+      centerline correct, only width wrong \\
+    Road 33\% pixels deleted & 0.667 & 0.759 & \textbf{1.000} & 0.863 & 0.953 &
+      network degraded; \textbf{DTAF1 misses this} \\
+    Building eroded 5px & $0.562^\dagger$ & --- & 0.917 & 0.939 & 0.907 &
+      shape genuinely worse; both degrade correctly \\
+    Sparse road (15px offset, ${\sim}0.4\%$ of image) & 0.000 & --- & 0.500 & \textbf{0.000} & 1.000 &
+      building perfect, road wrong; CBHM collapse \\
+    Null prediction & 0.000 & 0.000 & 0.000 & 0.000 & 0.000 & baseline \\
+    \bottomrule
+  \end{tabular}
+  \vspace{2pt}
+  {\footnotesize $^\dagger$Building IoU, not road IoU, for this row.}
+\end{table*}
+
+We adopt a simple, uniform data representation throughout: every input is an $H\times W$
+\texttt{uint8} NumPy array of integer class labels, with $0=$ background, $1=$ road, $2=$
+building, and an optional $3=$ point feature, used only where the underlying dataset actually has
+a point class. Every distance-based tolerance in the library is expressed in pixels but is meant
+to be tied to a tile's ground sample distance (GSD): $d = \text{physical\_metres} /
+\text{GSD\_metres\_per\_pixel}$, so the same physical tolerance (e.g., ``3 metres of road
+centerline slop'') applies consistently across imagery captured at different resolutions.
+Section~\ref{sec:method} reuses this exact class convention on batched torch tensors --- channel
+index equals class id --- so a \texttt{class\_config} dict is literally shareable between an eval
+call (\texttt{dtaf1()}) and a training loss (\texttt{ToleranceBandLoss}).
+
+This paper makes seven contributions:
+
+\begin{enumerate}
+  \item \textbf{A differentiable multi-task training loss} (Section~\ref{sec:method}) whose three
+    geometric terms are direct, well-precedented relaxations of three of this paper's own eval
+    metrics --- soft tolerance-band (DTAF1), soft-clDice (Shit et~al.\ \cite{shit2021cldice}), and
+    Gaussian-heatmap point regression (CenterNet-style) --- plus a masked multi-source training
+    scheme letting heterogeneous datasets (SpaceNet road+building, Potsdam building+point) jointly
+    supervise one 4-class model despite neither alone annotating all three feature types.
+    Validated via controlled synthetic ablations (Section~\ref{sec:results}) and a small real
+    joint-training sanity check across 153 real tiles (Section~\ref{sec:results}) --- not a
+    benchmark-scale study.
+  \item \textbf{DTAF1} (Section~\ref{sec:evalprotocol}) --- a single, class-agnostic
+    tolerance-radius F1 formula spanning linear and polygonal classes with one code path; scoring
+    a newly added feature type is a configuration change, not a code change.
+  \item \textbf{CBHM} (Section~\ref{sec:evalprotocol}) --- a harmonic-mean composite of clDice and
+    boundary F1, deliberately designed as DTAF1's ``harsh'' foil, so a single feature type failing
+    outright is not masked by the other type succeeding.
+  \item \textbf{\texttt{dtaf1\_weighted} / \texttt{cbhm\_soft}} (Section~\ref{sec:composite}) ---
+    GT-pixel-count-weighted companions to DTAF1 and CBHM that soften single-class collapse,
+    motivated by a real failure case found on SpaceNet imagery (\texttt{Khartoum\_img371}).
+  \item A raster-only approximation of \textbf{APLS} (Section~\ref{sec:evalprotocol}) --- no
+    vector road graph survives anywhere in this pipeline, see Section~\ref{sec:implementation} ---
+    and \textbf{DTAF1-Topo} (Section~\ref{sec:topological}), which blends this connectivity term
+    into DTAF1 and closes the road-breakage blind spot demonstrated in
+    Table~\ref{tab:failure-modes}.
+  \item \textbf{\texttt{point\_f1}} (Section~\ref{sec:evalprotocol}), a point-feature metric using
+    Hungarian instance matching rather than greedy nearest-neighbor assignment, avoiding a
+    specific adversarial failure mode.
+  \item Empirical validation (Sections~\ref{sec:expsetup}--\ref{sec:results}) spanning nine
+    synthetic eval-metric sensitivity sweeps, seven synthetic loss-ablation sweeps, a curated
+    real-data sample from SpaceNet (four cities) and ISPRS Potsdam, and a first trained-model
+    pipeline scored end-to-end by the library.
+\end{enumerate}
+
+The rest of the paper is organized as follows. Section~\ref{sec:related} places this work relative
+to prior evaluation metrics and differentiable segmentation losses. Section~\ref{sec:evalprotocol}
+defines each eval metric primitive, following a one-subsection-per-primitive structure.
+Section~\ref{sec:motivation} empirically motivates why these primitives are necessary.
+Sections~\ref{sec:composite} and~\ref{sec:topological} present two analysis-and-design studies ---
+composite robustness and topological robustness. Section~\ref{sec:method} introduces the
+differentiable multi-task training loss, presenting each term as a direct analog of one primitive
+from Section~\ref{sec:evalprotocol}. Section~\ref{sec:implementation} describes the
+implementation. Sections~\ref{sec:expsetup}--\ref{sec:results} give the full experimental setup
+and results across synthetic eval sweeps, synthetic loss ablations, real-data, and trained-model
+settings. Section~\ref{sec:discussion} discusses limitations honestly. Section~\ref{sec:conclusion}
+concludes.

@@ -1,0 +1,46 @@
+\section{Implementation}
+\label{sec:implementation}
+
+\begin{itemize}
+  \item All \texttt{metrics/}/\texttt{datasets/} inputs/outputs are plain NumPy $H\times W$
+    \texttt{uint8} arrays --- no framework lock-in. \texttt{losses/} (Section~\ref{sec:method}) is
+    the one exception by design: it is pure \texttt{torch}, batched-tensor, differentiable, and
+    deliberately kept in its own top-level package rather than inside \texttt{metrics/}, whose
+    documented contract (``every public function takes $H\times W$ integer label maps and returns
+    dicts of named scalars'') is non-differentiable by construction --- adding torch code there
+    would silently violate that invariant.
+  \item Every public \texttt{metrics/}/\texttt{datasets/} function returns a \textbf{dict of named
+    scalars}, never a bare float, for logging/inspection; \texttt{PLEMMultiTaskLoss.forward()}
+    follows the same convention on the training side (Section~\ref{subsec:multitask-loss}).
+\end{itemize}
+
+\begin{table}
+  \caption{Tech stack, grouped by role.}
+  \label{tab:techstack}
+  \begin{tabular}{@{}p{2.6cm}p{5.3cm}@{}}
+    \toprule
+    Role & Libraries \\
+    \midrule
+    Core numerics & \texttt{numpy}, \texttt{scipy} (\texttt{scipy.ndimage}) \\
+    Skeletonization/morphology & \texttt{scikit-image} \\
+    Graph algorithms & \texttt{networkx}, \texttt{scipy.spatial.cKDTree} \\
+    Optimal assignment & \texttt{scipy.optimize.linear\_sum\_assignment} (eval-only) \\
+    Geospatial I/O & \texttt{rasterio}, \texttt{shapely} \\
+    Data acquisition & \texttt{requests} (anonymous S3), \texttt{kaggle} \\
+    Differentiable training losses & \texttt{torch}/\texttt{torch.nn.functional} (CPU-only); no
+      \texttt{kornia}/\texttt{torchvision} dependency added \\
+    Testing/analysis & \texttt{pytest}, \texttt{pandas}, \texttt{matplotlib}, \texttt{jupyterlab} \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Package structure/exports note: \texttt{dtaf1\_topo}, \texttt{apls}/\texttt{apls\_multiclass}/
+\texttt{mean\_apls} are \textbf{not} re-exported at the \texttt{metrics/\_\_init\_\_.py} top level;
+\texttt{cbhm\_soft} exists only as a dict key inside \texttt{cbhm()}'s return, not a separate
+function --- deliberate, framed as ``validated on synthetic data only, not yet a drop-in
+replacement in the consolidated report'' (\texttt{evaluate\_all()}, expanded in
+Section~\ref{sec:discussion}). \texttt{losses/\_\_init\_\_.py} re-exports all five public classes
+(\texttt{ToleranceBandLoss}, \texttt{SoftBoundaryLoss}, \texttt{SoftClDiceLoss},
+\texttt{PointHeatmapLoss}, \texttt{PLEMMultiTaskLoss}) --- no equivalent ``not yet wired in''
+caveat, since Section~\ref{sec:method}'s terms are new and never had a prior consolidated entry
+point to be missing from.

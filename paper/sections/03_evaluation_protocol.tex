@@ -1,0 +1,164 @@
+\section{Evaluation Protocol}
+\label{sec:evalprotocol}
+
+These six primitives now serve two purposes rather than one: as before, they are PLEM's
+evaluation vocabulary for scoring any prediction against ground truth; as of
+Section~\ref{sec:method}, three of them are also the metric each corresponds to that a
+differentiable loss term is designed to approximate during training. Nothing in this section
+changes to accommodate that --- the metrics stay exactly as originally defined and validated;
+Section~\ref{sec:method} does the work of relating a \emph{separate} differentiable formulation
+back to each one.
+
+\textbf{Shared notation.} Let $P$ and $G$ be $H\times W$ integer label maps (prediction and
+ground truth) over the class set $C = \{0, 1, 2, [3]\}$. For class $c$, define binary masks
+$P_c = (P = c)$ and $G_c = (G = c)$. Every primitive in this section is applied per-class and then
+reduced (macro or GT-pixel-count-weighted mean) across the classes relevant to it.
+
+\textbf{Shared edge-case convention.} Every primitive below implements the same rule, verified
+identical across \texttt{dtaf1.py:43-51}, \texttt{cldice.py:51-56}, \texttt{boundary\_f1.py:68-72},
+\texttt{point\_f1.py:109-120}, and \texttt{apls.py:141-144}:
+both $P_c$ and $G_c$ empty $\Rightarrow$ score $= 1.0$ (vacuously correct); exactly one of $P_c,
+G_c$ empty $\Rightarrow$ score $= 0.0$ (total failure). Stated once here as a cross-cutting design
+decision rather than repeated per metric.
+
+\subsection{DTAF1 --- Distance-Tolerant, per-class F1}
+\label{subsec:dtaf1}
+
+Tolerance-radius matching via Euclidean distance transforms
+(\texttt{scipy.ndimage.distance\_transform\_edt}):
+\begin{align}
+  \mathrm{TP}_{\mathrm{pred}} &= |\{x \in P_c : \mathrm{EDT}(1-G_c)(x) \le d_c\}| \\
+  \mathrm{TP}_{\mathrm{gt}}   &= |\{x \in G_c : \mathrm{EDT}(1-P_c)(x) \le d_c\}| \\
+  \mathrm{Precision}_c &= \mathrm{TP}_{\mathrm{pred}} / |P_c|, \quad
+  \mathrm{Recall}_c = \mathrm{TP}_{\mathrm{gt}} / |G_c| \\
+  F1_c &= \frac{2 \cdot \mathrm{Precision}_c \cdot \mathrm{Recall}_c}
+               {\mathrm{Precision}_c + \mathrm{Recall}_c}
+\end{align}
+Reduction across classes (both are always computed; \texttt{reduction} just selects which is
+surfaced as the top-level \texttt{dtaf1} key):
+\begin{align}
+  \mathrm{DTAF1}_{\mathrm{macro}} &= \tfrac{1}{|C|}\textstyle\sum_c F1_c \\
+  \mathrm{DTAF1}_{\mathrm{weighted}} &= \left(\textstyle\sum_c n_c F1_c\right) \big/
+    \left(\textstyle\sum_c n_c\right), \quad n_c = |G_c|
+\end{align}
+
+\begin{lstlisting}[language=Python, caption={Tolerance-matching core, \texttt{metrics/dtaf1.py:53-64}}]
+dist_from_gt = distance_transform_edt(1 - g)
+dist_from_pred = distance_transform_edt(1 - p)
+tp_pred = int(((p == 1) & (dist_from_gt <= d)).sum())
+tp_gt = int(((g == 1) & (dist_from_pred <= d)).sum())
+precision = tp_pred / n_pred
+recall = tp_gt / n_gt
+f1 = (2 * precision * recall / (precision + recall)
+      if (precision + recall) > 0 else 0.0)
+\end{lstlisting}
+
+\texttt{DEFAULT\_TOLERANCES = \{"road": 10, "building": 2\}} (pixels; see
+Section~\ref{subsec:tolerance-radii} for how these were chosen). Function signature:
+\texttt{dtaf1(pred, gt, class\_config, reduction="macro") -> dict}, returning \texttt{dtaf1},
+\texttt{dtaf1\_macro}, \texttt{dtaf1\_weighted}, \texttt{per\_class}. \textbf{Class-agnostic by
+construction} --- scoring a new class costs zero code changes, just an added
+\texttt{class\_config} entry. Section~\ref{subsec:tolerance-loss}'s \texttt{ToleranceBandLoss}
+reuses this exact \texttt{class\_config} shape.
+
+\subsection{clDice --- Centerline Dice}
+\label{subsec:cldice}
+
+(Cite Shit et~al., CVPR 2021 \cite{shit2021cldice} in Section~\ref{sec:related} --- not here.)
+\begin{align}
+  S_p &= \mathrm{skeletonize}(P_c), \quad S_g = \mathrm{skeletonize}(G_c) \\
+  T_{\mathrm{prec}} &= |S_p \cap G_c| / |S_p|, \quad T_{\mathrm{sens}} = |S_g \cap P_c| / |S_g| \\
+  \mathrm{clDice} &= \frac{2 \cdot T_{\mathrm{prec}} \cdot T_{\mathrm{sens}}}
+                          {T_{\mathrm{prec}} + T_{\mathrm{sens}}}
+\end{align}
+Width-insensitive (a predicted road $3.3\times$ too thick still scores $\mathrm{clDice}=1.000$,
+Table~\ref{tab:failure-modes} row 2) but offset-brittle: skeletons of the exact same road shifted
+5px share \emph{zero} overlap ($\mathrm{clDice}=0.000$, row 1) --- this offset-sensitivity is
+exactly what motivates DTAF1's distance-tolerant matching instead of a raw skeleton intersection.
+Section~\ref{subsec:cldice-loss}'s \texttt{SoftClDiceLoss} reimplements this width-insensitivity
+property differentiably, with a caveat (Sections~\ref{subsec:cldice-loss},~\ref{sec:discussion}).
+
+\subsection{Boundary F1 (BF) and the IoU Baseline}
+\label{subsec:bf}
+
+(Cite Csurka et~al., BMVC 2013 \cite{csurka2013evaluation} in Section~\ref{sec:related} --- not
+here.)
+\begin{align}
+  \mathrm{Precision} &= |\{x \in B_p : \mathrm{dist}(x, B_g) \le \tau\}| / |B_p| \\
+  \mathrm{Recall} &= |\{x \in B_g : \mathrm{dist}(x, B_p) \le \tau\}| / |B_g| \\
+  \mathrm{BF} &= \frac{2 \cdot \mathrm{Precision} \cdot \mathrm{Recall}}
+                      {\mathrm{Precision} + \mathrm{Recall}}
+\end{align}
+where $B_p = \mathrm{boundary}(P_c)$, $B_g = \mathrm{boundary}(G_c)$ via morphological boundary
+extraction. \texttt{iou()} is introduced here explicitly as the pixel-overlap baseline comparator
+used throughout Sections~\ref{sec:motivation} and~\ref{sec:expsetup}. Section~\ref{subsec:boundary-loss}'s
+\texttt{SoftBoundaryLoss} reuses Section~\ref{subsec:tolerance-loss}'s precision/recall primitive
+applied to a soft boundary map instead of the full class mask, making it the most directly-shared
+piece of machinery between any two \texttt{losses/} terms.
+
+\subsection{Point F1 --- Hungarian Instance Matching}
+\label{subsec:pointf1}
+
+For the optional point class (trees, lamp posts, manhole covers): connected-component blobs are
+reduced to centroids (\texttt{scipy.ndimage.label} + \texttt{center\_of\_mass}), then matched via
+tolerance-restricted Hungarian assignment (\texttt{scipy.optimize.linear\_sum\_assignment}), not
+greedy nearest-neighbor.
+
+\begin{lstlisting}[language=Python, caption={Hungarian assignment core, \texttt{metrics/point\_f1.py:58-65}}]
+dist = cdist(gt_c, pred_c)
+big = tolerance * 1e6 + 1.0
+cost = np.where(dist <= tolerance, dist, big)
+row_ind, col_ind = linear_sum_assignment(cost)
+valid = dist[row_ind, col_ind] <= tolerance
+return int(valid.sum())
+\end{lstlisting}
+
+Justified by the clustered-points adversarial case in \texttt{TestPointInstanceMatching}: greedy
+nearest-neighbor gets $\mathrm{TP}=1$ where Hungarian finds the globally optimal $\mathrm{TP}=2$
+(formalized in Appendix~\ref{app:proofs}, Section~\ref{app:a6}). \textbf{This is the one primitive
+with no differentiable analog in Section~\ref{sec:method}} --- Hungarian assignment and
+connected-component labeling have no useful gradient path back to per-pixel logits;
+Section~\ref{subsec:heatmap-loss} reformulates point supervision entirely as heatmap regression
+instead, a genuine train/eval formulation mismatch discussed explicitly in
+Section~\ref{sec:discussion}.
+
+\subsection{APLS --- Raster-Skeleton Average Path Length Similarity}
+\label{subsec:apls}
+
+No vector road graph survives anywhere in this pipeline --- \texttt{datasets/common.py::rasterize\_lines}
+collapses roads straight to a flat pixel mask, discarding segment/graph structure --- so APLS is
+approximated entirely from raster skeletons (\texttt{metrics/apls.py}): skeletonize pred/GT masks,
+build an 8-connected pixel-adjacency graph (\texttt{networkx}; edge weight = Euclidean pixel
+distance), then for sampled GT control-point pairs $(u,v)$ within one GT connected component,
+compare GT shortest-path length $L_{\mathrm{gt}}(u,v)$ against the predicted shortest-path length
+between the nearest snap-matched predicted-graph nodes (\texttt{scipy.spatial.cKDTree}), scoring
+$\max(0, 1 - |L_{\mathrm{pred}} - L_{\mathrm{gt}}| / L_{\mathrm{gt}})$ if matched, else 0.
+Control-point pairs are sampled \textbf{grouped by source}, so one
+\texttt{nx.single\_source\_dijkstra\_path\_length} call amortizes across many targets instead of
+one independent Dijkstra call per pair --- see complexity analysis in
+Appendix~\ref{app:complexity}, Section~\ref{app:b6}. This is deliberately sensitive to a failure
+DTAF1's per-pixel tolerance matching misses entirely: once the skeleton fragments, shortest paths
+between control points either lengthen sharply or vanish, so APLS collapses where DTAF1 does not.
+\textbf{Graph shortest-path recomputation has no tractable lightweight differentiable relaxation}
+(Section~\ref{sec:method}'s design assessment, Section~\ref{sec:discussion}) --- APLS and
+DTAF1-Topo (Section~\ref{sec:topological}) stay eval-only permanently, a stated design decision
+rather than a to-do.
+
+\subsection{CBHM --- Composite clDice/Boundary-F1 Harmonic Mean}
+\label{subsec:cbhm}
+
+\begin{align}
+  \mathrm{clDice}_{\mathrm{mean}} &= \mathrm{mean}(\mathrm{clDice}_c : c \in \mathrm{linear\_classes}) \\
+  \mathrm{BF}_{\mathrm{mean}} &= \mathrm{mean}(\mathrm{BF}_c : c \in \mathrm{polygon\_classes}) \\
+  \mathrm{CBHM} &= \frac{2 \cdot \mathrm{clDice}_{\mathrm{mean}} \cdot \mathrm{BF}_{\mathrm{mean}}}
+                        {\mathrm{clDice}_{\mathrm{mean}} + \mathrm{BF}_{\mathrm{mean}}}
+\end{align}
+The harmonic mean is a \textbf{deliberate design choice}: a single class scoring 0 collapses the
+whole composite to 0. Positioned explicitly as the ``harsh'' foil to DTAF1's more lenient macro
+average (Table~\ref{tab:failure-modes}'s ``Road shifted 5px'' row: $\mathrm{DTAF1}=1.000$ but
+$\mathrm{CBHM}=0.000$, on the \emph{same} input).
+
+\textbf{Composition note.} These six primitives compose into the two ``final iteration''
+composites covered later rather than here --- \texttt{cbhm\_soft} in Section~\ref{sec:composite}
+and DTAF1-Topo in Section~\ref{sec:topological} --- and, as of this revision, into the three
+geometry-aware \texttt{losses/} terms in Section~\ref{sec:method}.
