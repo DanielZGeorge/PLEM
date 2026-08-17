@@ -17,8 +17,13 @@
 > `tests/test_loss_sensitivity.py`). §9.5's data-side setup (Potsdam building extraction,
 > `datasets/joint.py`) is now built and validated against real data (123 SpaceNet + 30 Potsdam
 > tiles loaded and tagged, 3 real Potsdam crops confirmed to carry both building and point labels).
-> **§10.5 (real joint training results) is still marked pending** — the training run itself has not
-> yet been executed as of this revision; do not read §9.5's setup description as reported results.
+> **§10.5 (real joint training results) is now filled in**: a real 2-epoch run of
+> `notebooks/train_unet_joint.ipynb` completed this revision, with all four loss sub-terms
+> confirmed decreasing and `point_f1_mean` confirmed non-`None` on real Potsdam test tiles. Framed
+> throughout as a pipeline sanity check on a deliberately small epoch budget, not a benchmark
+> claim — its SpaceNet-only aggregate scores come in below the 15-epoch CE+Dice baseline's, which
+> §10.5 reads as an artifact of the epoch/task-difficulty gap rather than evidence about the new
+> loss's quality, since no epoch-matched comparison has been run.
 
 ---
 
@@ -54,8 +59,10 @@ al.'s soft-skeletonization), and a CenterNet-style Gaussian-heatmap term standin
 Hungarian-matched point F1, which has no tractable differentiable relaxation — plus a masked
 multi-source training scheme letting heterogeneous single-modality datasets (SpaceNet: road+
 building; Potsdam: building+point) jointly supervise one 4-class model. We validate the loss with
-20 unit tests and synthetic per-term ablation sweeps confirming each term encodes the geometric
-sensitivity it claims to, with a small real joint-training pipeline sanity check underway.
+20 unit tests, synthetic per-term ablation sweeps confirming each term encodes the geometric
+sensitivity it claims to, and a small real joint-training pipeline sanity check across 153 real
+tiles, confirming all four loss terms learn jointly and that point-feature evaluation flows
+end-to-end through the metric library on a real trained model's output.
 
 ### CCS Concepts
 
@@ -137,7 +144,7 @@ This paper makes seven contributions:
    — plus a masked multi-source training scheme letting heterogeneous datasets (SpaceNet
    road+building, Potsdam building+point) jointly supervise one 4-class model despite neither
    alone annotating all three feature types. Validated via controlled synthetic ablations (§9.4/
-   §10.4) and a small real joint-training sanity check (§9.5/§10.5, in progress) — not a
+   §10.4) and a small real joint-training sanity check across 153 real tiles (§9.5/§10.5) — not a
    benchmark-scale study.
 2. **DTAF1** (§3.1) — a single, class-agnostic tolerance-radius F1 formula spanning linear and
    polygonal classes with one code path; scoring a newly added feature type is a configuration
@@ -1139,18 +1146,79 @@ under the perturbation family its `metrics/` counterpart is designed to catch, a
 negative control stayed flat. See `CLAUDE.md`'s `losses/` section and
 `tests/test_loss_sensitivity.py`'s module docstring for the full per-sweep numeric tables.
 
-### 10.5 Joint Multi-Source Training Results *(pending)*
+### 10.5 Joint Multi-Source Training Results
 
-**Not yet run as of this revision.** §9.5 describes the setup; this subsection will report, once
-that milestone completes: per-epoch per-term loss curves (confirming all four sub-terms — not just
-the total — actually decrease over training, the specific "silent failure" mode to guard against
-per `CLAUDE.md`'s verification checklist), `evaluate_all(..., point_classes=[3])`'s `point_f1_mean`
-on real stitched Potsdam test-tile predictions (the first non-`None` value that field will ever
-report on real data), qualitative 4-color prediction panels, and a directional comparison against
-§10.3's frozen CE+Dice baseline on the classes/tiles both runs share. Do not read any number into
-this subsection until it is filled in from an actual executed run — this placeholder exists so the
-paper's structure is fixed before the run happens, not so a result can be inferred from its
-absence.
+**Executed** (`notebooks/train_unet_joint.ipynb`, this revision). §9.5's setup ran to completion:
+153 cached tiles loaded (123 SpaceNet + 30 Potsdam), split per-source 70/15/15
+(SpaceNet: 86/18/19 train/val/test; Potsdam: 21/4/5), patchified to 3117 train + 652 val patches.
+A per-batch source-mix printout confirmed both sources appear in training (batches 0–2:
+16/0, 16/0, 15/1 spacenet/potsdam patches) — Potsdam patches are necessarily rare per batch
+(only 21 of 3117 train patches, ≈0.7%, since each Potsdam crop contributes exactly one
+already-patch-sized tile, versus 36 patches per large SpaceNet tile), but they are not absent.
+
+**Training** ran for 2 epochs (reduced from the baseline's 15 — an explicit, stated scope choice
+for this CPU-only pipeline sanity check, not a claim that more epochs wouldn't help):
+
+| Epoch | train_loss | val_loss | ce_dice | tolerance | cldice | heatmap |
+|---|---|---|---|---|---|---|
+| 1 | 3.3824 | 2.8458 | 1.5427 | 0.5896 | 0.9038 | 0.3461 |
+| 2 | 2.6823 | 2.5957 | 1.2497 | 0.5509 | 0.8718 | 0.0098 |
+
+**Verification passed**: all four sub-terms decreased epoch-over-epoch, not just the total —
+`heatmap` dropped the most sharply (0.346 → 0.010, a 35× reduction), consistent with the model
+quickly learning that predicting near-zero point probability almost everywhere is a strong early
+strategy given how sparse real point coverage is even within Potsdam patches.
+
+**Test-set evaluation** (24 tiles: 19 SpaceNet + 5 Potsdam), `evaluate_all(pred, gt,
+point_classes=[3], dtaf1_config=<4-class config>)`:
+
+| | SpaceNet-only (n=19) mean±std | Potsdam-only (n=5) mean±std |
+|---|---|---|
+| `cbhm` | 0.144 ± 0.115 | 0.000 ± 0.000 |
+| `cbhm_soft` | 0.230 ± 0.119 | 0.078 ± 0.159 |
+| `dtaf1` | 0.304 ± 0.157 | 0.092 ± 0.149 |
+| `dtaf1_weighted` | 0.371 ± 0.212 | 0.076 ± 0.158 |
+| `cldice_mean` | 0.173 ± 0.141 | 0.000 ± 0.000 |
+| `bf_mean` | 0.252 ± 0.151 | 0.078 ± 0.159 |
+| `point_f1_mean` | — | 0.200 ± 0.447 |
+
+**Verification passed**: `point_f1_mean` is non-`None` for 5/5 real stitched Potsdam test tiles
+(values `[0.0, 0.0, 0.0, 1.0, 0.0]`) — the first time `evaluate_all()`'s `point_classes` argument
+has ever been exercised end-to-end on a real trained model's output, not left `None`.
+
+**Baseline comparison**: the raw `data/train_unet_test_results.csv` this session's `train_unet.ipynb`
+would produce was not present in this environment (that baseline was originally run in an earlier
+session; only its already-documented aggregate survives, §10.3: `cbhm` 0.316±0.126, `dtaf1`
+0.440±0.134, 15 epochs, single-source SpaceNet-only 3-class model), so no row-matched comparison
+was possible this session — only a directional one against those published aggregates. The joint
+run's SpaceNet-only `cbhm` (0.144) and `dtaf1` (0.304) both come in **lower** than the baseline's.
+Read this honestly rather than as evidence the new loss underperforms: this run trained for 2
+epochs against the baseline's 15, on a bigger effective task (a 4-class head jointly absorbing
+gradient from four loss terms, one of them from a source, Potsdam, contributing under 1% of
+training patches) — an apples-to-apples epoch-matched comparison has not been run. **Framed
+honestly as a pipeline sanity check, not a benchmark or an ablation claim**, matching §9.3's own
+posture toward the baseline itself.
+
+**Qualitative review** (4-color panels, worst→best `cbhm` tiles): mixed quality, as expected at 2
+epochs, and one genuinely interesting real-data finding. The **worst**-scoring tile by `cbhm`
+(`Vegas_img425`, `cbhm=0.000`) is visually one of the *better*-looking predictions in the panel —
+road centerlines and building footprints are both recognizable and roughly aligned with GT. The
+per-metric breakdown explains the apparent contradiction and is a real-data echo of §3.6's own
+"harsh vs. lenient foil" story: `bf_mean=0.000` exactly (building Boundary F1, tolerance 2px,
+collapsed completely) while `dtaf1_weighted=0.902` and `cldice_mean=0.474` are both high — CBHM's
+harmonic mean zero-collapses the *entire* tile score from one class's tight-tolerance metric
+hitting exactly zero, even though the lenient, tolerance-based DTAF1 view and the road-only clDice
+view both say this tile is mostly correct. This is the first time that exact zero-collapse
+mechanism (Appendix A.3) has been observed on a real trained model's output rather than only in
+synthetic scenes (Table 1) or GT-vs-perturbed-GT sweeps (§10.2). The best-scoring shown tile
+(`Vegas_img997`, `cbhm=0.364`) has a more balanced per-metric profile (`dtaf1=0.402`,
+`cldice_mean=0.336`, `bf_mean=0.397`) — no single class collapsing, road and building both
+partially but not perfectly recovered. The two weakest-looking predictions in the panel
+(`Paris_img449`, `Paris_img250`) show substantial over-prediction of the road class across
+open/agricultural terrain that has no road in GT — consistent with an underfit model at this
+epoch budget, not a structural failure of the joint loss or masking scheme. No qualitative
+evidence of a masking bug (e.g. a SpaceNet tile hallucinating point-class predictions, which would
+indicate `class_mask` leaking) was observed in any reviewed panel.
 
 ---
 
@@ -1205,9 +1273,28 @@ absence.
   are), not a bug. `PLEMMultiTaskLoss`'s per-term `weights` dict exists specifically to rebalance
   this during real training (§9.5); the right weighting has not yet been empirically tuned.
 - **SpaceNet/Potsdam are not resampled to a common GSD** (§9.5) — a Potsdam training patch covers a
-  much smaller physical area than a SpaceNet patch at the same pixel size. Whether this matters in
-  practice (versus the model simply learning two different "regimes" implicitly, gated by which
-  classes a given patch's `class_mask` supervises) is untested until §10.5 completes.
+  much smaller physical area than a SpaceNet patch at the same pixel size. §10.5's run did not
+  surface an obvious failure mode from this (no qualitative evidence the model confuses the two
+  regimes), but a rigorous test of whether it matters would need an ablation isolating GSD from
+  every other confound, not yet run.
+- **§10.5's real training run cannot separate "the new loss underperforms" from "2 epochs on a
+  harder task underperforms."** Its SpaceNet-only aggregate scores (`cbhm` 0.144, `dtaf1` 0.304)
+  come in below the CE+Dice baseline's 15-epoch numbers (`cbhm` 0.316, `dtaf1` 0.440, §10.3), but
+  the joint run trained for 2 epochs (an explicit, CPU-only-time-budget scope choice, §9.5) against
+  a strictly harder task (4-class head, four combined loss terms, a second heterogeneous data
+  source contributing under 1% of training patches). No epoch-matched comparison exists yet —
+  treat the current numbers as evidence the pipeline runs correctly end-to-end, not as a verdict on
+  the new loss's quality relative to CE+Dice; the highest-priority future-work item (§12) is
+  closing this gap.
+- **The `max_instances` cap added to `gt_centroids_to_heatmap` during this session's integration
+  testing** (`losses/heatmap.py`, default 100) is a defensive bound found necessary while profiling
+  `train_unet_joint.ipynb`: a pathological, non-blob-like synthetic target (dense per-pixel noise,
+  never produced by real Potsdam labels) drove the per-centroid Python loop underlying heatmap
+  target construction to thousands of connected components, stalling a single training batch for
+  minutes with no error. Real Potsdam crops top out around two dozen instances per tile, so the cap
+  is a no-op on real data — recorded here as a concrete instance of §7.5's cost profile (this term
+  scales with instance count, not just image size, unlike the other three `losses/` terms,
+  Appendix B §B.11).
 
 ---
 
@@ -1229,8 +1316,10 @@ the evaluation metrics themselves.
 
 Future work:
 
-- Complete and report §9.5/§10.5's real joint multi-source training run (highest priority — every
-  other item below is downstream of having real results to react to).
+- Run an epoch-matched (or otherwise fairly controlled) comparison between the CE+Dice baseline
+  and the new joint loss (highest priority — §10.5's 2-epoch run cannot separate "the new loss is
+  worse" from "2 epochs on a harder task is worse," and every other item below benefits from
+  having that real comparison to react to).
 - Wire `dtaf1_topo` into `evaluate_all()` and `metrics/__init__.py` after real-data validation
   (§10.2's Finding #1, §11).
 - Re-run `dtaf1_topo`/`apls` on the real 24-tile SpaceNet sample already used for every other

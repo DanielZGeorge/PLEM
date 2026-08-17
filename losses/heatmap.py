@@ -27,7 +27,12 @@ import torch.nn.functional as F
 from scipy.ndimage import label as cc_label, center_of_mass
 
 
-def gt_centroids_to_heatmap(gt_point_mask: torch.Tensor, sigma: float = 2.0) -> torch.Tensor:
+_MAX_INSTANCES_WARNED = False
+
+
+def gt_centroids_to_heatmap(
+    gt_point_mask: torch.Tensor, sigma: float = 2.0, max_instances: int = 100
+) -> torch.Tensor:
     """
     (B, H, W) binary GT point-class mask -> (B, H, W) float Gaussian heatmap
     in [0, 1]. Computed under `no_grad` via `scipy.ndimage.label` +
@@ -37,6 +42,15 @@ def gt_centroids_to_heatmap(gt_point_mask: torch.Tensor, sigma: float = 2.0) -> 
     the loss's gradient path. Overlapping Gaussians from nearby GT points are
     combined via elementwise max (standard CenterNet convention — avoids
     peak inflation where points cluster).
+
+    `max_instances` bounds worst-case cost: the per-centroid loop below does
+    one full (H, W) Gaussian burn per instance, so a mask with a pathological
+    number of tiny/scattered components (e.g. dense per-pixel noise, never
+    seen on real point-feature data — real Potsdam crops top out around a
+    few dozen instances per 256x256 tile) could otherwise silently stall
+    training for minutes per batch with no error. Instances beyond this cap
+    are dropped (with a one-time warning) rather than processed, trading
+    target completeness for a bounded worst case on malformed input.
     """
     device = gt_point_mask.device
     mask_np = gt_point_mask.detach().to("cpu").numpy()
@@ -49,6 +63,16 @@ def gt_centroids_to_heatmap(gt_point_mask: torch.Tensor, sigma: float = 2.0) -> 
         labeled, n = cc_label(mask_np[b] > 0)
         if n == 0:
             continue
+        if n > max_instances:
+            global _MAX_INSTANCES_WARNED
+            if not _MAX_INSTANCES_WARNED:
+                print(
+                    f"gt_centroids_to_heatmap: {n} connected components in one sample exceeds "
+                    f"max_instances={max_instances} -- dropping the excess (this should not "
+                    f"happen on real point-feature data; check upstream labels if it does)."
+                )
+                _MAX_INSTANCES_WARNED = True
+            n = max_instances
         centroids = np.asarray(
             center_of_mass(mask_np[b] > 0, labeled, np.arange(1, n + 1))
         ).reshape(-1, 2)

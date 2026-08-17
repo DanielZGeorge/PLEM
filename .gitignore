@@ -9,4 +9,6 @@ build/
 .idea/
 *.iml
 data/
+models/*
+!models/*.py
 .claude/
