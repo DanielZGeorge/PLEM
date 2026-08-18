@@ -27,7 +27,12 @@
 
 \usepackage{booktabs}
 \usepackage{amsmath}
-\usepackage{amssymb}
+%% amssymb intentionally NOT loaded: acmart already provides it internally
+%% (via its own math/font setup), and re-loading it here caused a fatal
+%% "Command \Bbbk already defined" error on a real Overleaf compile --
+%% amssymb defines \Bbbk with \newcommand (unlike its other symbols, which
+%% use \DeclareMathSymbol and merely warn on redeclaration), so a second
+%% load is a hard error, not just a harmless warning.
 \usepackage{graphicx}
 
 %% Copyright/rights block -- placeholder values, fill in at submission time.

@@ -34,13 +34,40 @@ package resolution satisfy the same `\documentclass`/`\bibliographystyle` calls.
 
 ## No local LaTeX toolchain in this environment
 
-Compiling was not verified locally — no `pdflatex`/`latexmk`/`bibtex`/`biber` binary is installed
-in this environment (checked via `which`/`where`, none found). The `.tex` files were written
-carefully and reviewed for balanced braces/environments and consistent `\label`/`\ref` usage
-(every `\ref{...}` in the section files corresponds to a `\label{...}` defined somewhere else in
-the project — verified by cross-checking the two lists), but **the first real compile should
-happen on Overleaf immediately after upload** — treat Overleaf's own compile log as the
-ground-truth "does it compile" check, and fix anything it flags before treating this as final.
+No `pdflatex`/`latexmk`/`bibtex`/`biber` binary is installed in this environment (checked via
+`which`/`where`, none found), so this project's `.tex`/`.bib` files can only be checked by
+`\label`/`\ref`/`\cite` cross-referencing and brace/environment balance scripts, not an actual
+compile — the real compile happens on Overleaf.
+
+**A real Overleaf compile has been run and its diagnostics addressed** (`output.log`/`output.blg`/
+`output.chktex` reviewed from an Overleaf compile output download). What was found and fixed:
+- `\usepackage{amssymb}` in `main.tex` caused a fatal `Command \Bbbk already defined` error
+  (`pdflatex` exit code 1) — acmart already loads `amssymb` internally, and re-loading it clashes
+  because `\Bbbk` is defined with `\newcommand` (unlike its other symbols, which use
+  `\DeclareMathSymbol` and merely warn on redeclaration). Removed the redundant load;
+  `\usepackage{amsmath}` was left in place since it loaded cleanly with no conflict.
+  **Despite this error, `pdflatex` actually produced a complete 16-page PDF** — the nonzero exit
+  code came from the error counter, not a failure to render — but the error is real and worth
+  fixing for a clean compile regardless.
+- `sections/10_results.tex`'s Table~\ref{tab:joint-test} caption interrupted `\texttt{...}` with
+  `\textrm{...}` mid-parenthetical in a way that confused chktex's bracket matcher (2 flagged
+  "errors" in `output.chktex`); simplified to avoid the font-switching interruption entirely.
+- Several `refs.bib` entries triggered BibTeX warnings (empty publisher/address, missing pages) —
+  added `publisher` fields for venues where it's unambiguous (IEEE for CVPR/3DV, Springer for
+  ECCV/MICCAI, BMVA Press for BMVC); left page ranges as an explicit `TODO` comment rather than
+  guessing exact values. `zhou2019centernet` was reclassified `@article` → `@misc` with
+  `eprint`/`archivePrefix` fields, since it's an arXiv preprint with no journal volume/number —
+  the "no number and no volume" warning was a symptom of the wrong entry type, not missing data.
+- Added `\Description{...}` alt-text to both figures per acmart's own accessibility warning
+  ("Some images may lack descriptions").
+
+Not touched (cosmetic/expected, not compile errors): a few `Overfull \hbox` warnings from long
+inline code identifiers in narrow single-column text, and a `Package balance Warning: You have
+called \balance in second column` — the latter is acmart's own automatic end-of-document call for
+sigconf's two-column layout, not something this project's `.tex` files invoke.
+
+If you re-run a compile and hit something new, treat Overleaf's own log as ground truth and fix
+forward the same way — see `CLAUDE.md`'s `paper/` entry for how this round was resolved.
 
 ## Uploading to Overleaf
 

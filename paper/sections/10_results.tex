@@ -141,6 +141,9 @@ this CPU-only pipeline sanity check, not a claim that more epochs wouldn't help)
 
 \begin{figure}
   \includegraphics[width=\linewidth]{figures/joint_training_subterm_curves.png}
+  \Description{Line chart of four per-term training loss curves (ce\_dice, tolerance, cldice,
+  heatmap) over 2 epochs. All four lines slope downward; the heatmap curve drops most steeply,
+  from about 0.35 to about 0.01.}
   \caption{Per-term training loss over 2 epochs --- all four sub-terms decrease, not just the
   total; \texttt{heatmap} drops most sharply (a $35\times$ reduction).}
   \label{fig:joint-subterms}
@@ -153,8 +156,8 @@ point probability almost everywhere is a strong early strategy given how sparse 
 coverage is even within Potsdam patches.
 
 \begin{table}
-  \caption{Joint model test-set evaluation, split by source (\texttt{evaluate\_all(pred, gt,
-  point\_classes=[3], dtaf1\_config=}\textrm{4-class config}\texttt{)}).}
+  \caption{Joint model test-set evaluation, split by source, via \texttt{evaluate\_all()} with
+  \texttt{point\_classes=[3]} and a 4-class \texttt{dtaf1\_config}.}
   \label{tab:joint-test}
   \begin{tabular}{@{}lcc@{}}
     \toprule
@@ -192,6 +195,10 @@ Section~\ref{subsec:trainedmodel-setup}'s own posture toward the baseline itself
 
 \begin{figure}
   \includegraphics[width=\linewidth]{figures/joint_qualitative_panels.png}
+  \Description{Four rows of three panels each (RGB image with GT overlay, RGB image with
+  prediction overlay, raw prediction mask), one row per test tile, ordered worst to best by cbhm
+  score: Vegas\_img425, Paris\_img449, Paris\_img250, Vegas\_img997. Roads are overlaid in red,
+  buildings in green.}
   \caption{Qualitative review, worst$\to$best \texttt{cbhm} test tiles (GT / prediction / raw
   prediction mask; red$=$road, green$=$building). \texttt{Vegas\_img425} (top row, worst by
   \texttt{cbhm}) is visually one of the better-looking predictions --- see text for why its score
