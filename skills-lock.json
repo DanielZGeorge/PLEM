@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "literature-review": {
+      "source": "affaan-m/ECC",
+      "sourceType": "github",
+      "skillPath": "skills/scientific-thinking-literature-review/SKILL.md",
+      "computedHash": "b619c0f502c18280f9e7a8b5c5552215a2192c7b8308fe295d866666a12d8cd8"
+    }
+  }
+}

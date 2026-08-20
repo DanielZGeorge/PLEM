@@ -11,3 +11,4 @@ jupyterlab
 rasterio
 shapely
 kaggle
+torch
