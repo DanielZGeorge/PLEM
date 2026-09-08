@@ -54,11 +54,29 @@ def load_geojson_features(geojson_path) -> list:
     return out
 
 
+def read_geojson_crs(geojson_path, default: str = "EPSG:4326") -> str:
+    """
+    Return the CRS named in a geojson's top-level `crs` member (the GeoJSON
+    2008 convention, which SpaceNet6's building footprints use -- they are in
+    EPSG:32631 / UTM 31N, not lon/lat), or `default` if the member is absent
+    (RFC 7946 geojson is always WGS84 and omits it, as SN2/SN3 do).
+    """
+    with open(geojson_path, "r") as f:
+        data = json.load(f)
+    crs = data.get("crs")
+    if isinstance(crs, dict):
+        name = crs.get("properties", {}).get("name")
+        if name:
+            return name  # e.g. "urn:ogc:def:crs:EPSG::32631" -- rasterio/pyproj parse this
+    return default
+
+
 def to_pixel_geometries(geoms_props: list, raster_crs, transform, src_crs="EPSG:4326") -> list:
     """
     Reproject a list of (geometry, properties) tuples from `src_crs` (default:
-    WGS84 lon/lat, as used by SpaceNet geojsons) into the pixel (col, row)
-    space of a raster's own CRS + affine transform.
+    WGS84 lon/lat, as used by SpaceNet SN2/SN3 geojsons; SN6 footprints are in
+    the raster's own UTM CRS instead -- pass `src_crs` explicitly there) into
+    the pixel (col, row) space of a raster's own CRS + affine transform.
 
     Returns a list of (pixel_geometry, properties) tuples whose coordinates
     are directly usable with rasterio.features.rasterize's default identity
@@ -76,10 +94,11 @@ def to_pixel_geometries(geoms_props: list, raster_crs, transform, src_crs="EPSG:
     return out
 
 
-def rasterize_polygons(geoms_props: list, out_shape, raster_crs, transform, value: int = 1) -> np.ndarray:
-    """Rasterize a list of (polygon, properties) tuples (in the source geojson's
-    lon/lat CRS) onto a raster's pixel grid, filled with `value`."""
-    pixel_geoms = to_pixel_geometries(geoms_props, raster_crs, transform)
+def rasterize_polygons(geoms_props: list, out_shape, raster_crs, transform, value: int = 1,
+                       src_crs="EPSG:4326") -> np.ndarray:
+    """Rasterize a list of (polygon, properties) tuples (in `src_crs`, default
+    WGS84 lon/lat) onto a raster's pixel grid, filled with `value`."""
+    pixel_geoms = to_pixel_geometries(geoms_props, raster_crs, transform, src_crs=src_crs)
     shapes = [(g, value) for g, _ in pixel_geoms if not g.is_empty]
     if not shapes:
         return np.zeros(out_shape, dtype=np.uint8)
@@ -95,6 +114,7 @@ def rasterize_lines(
     gsd_m: float = 0.3,
     default_lanes: float = 2,
     value: int = 1,
+    src_crs="EPSG:4326",
 ) -> np.ndarray:
     """
     Rasterize a list of (LineString, properties) road-segment tuples by
@@ -104,7 +124,7 @@ def rasterize_lines(
     property when present (SpaceNet SN3/SN5 roads carry this), falling back
     to `default_lanes`.
     """
-    pixel_geoms = to_pixel_geometries(geoms_props, raster_crs, transform)
+    pixel_geoms = to_pixel_geometries(geoms_props, raster_crs, transform, src_crs=src_crs)
     px_per_m = 1.0 / gsd_m
     shapes = []
     for geom, props in pixel_geoms:

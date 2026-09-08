@@ -1,14 +1,17 @@
 """
-Joint SpaceNet + Potsdam training-source glue.
+Joint SpaceNet + Potsdam + SpaceNet6 training-source glue.
 
-Neither dataset alone supplies all three PLEM feature types: SpaceNet
-(datasets/spacenet.py) has road+building but no point class (no point-object
-class exists at SpaceNet's ~0.3-0.5m/px GSD); Potsdam (datasets/potsdam.py,
-with `extract_buildings=True`) has building+point but no road/linear class at
-all (its 6-class palette has no road color). A genuinely joint 0D/1D/2D
-training run needs to combine both, with each sample supervised only on the
-classes its *source* actually annotates -- this module is the single source
-of truth for that mapping, used both by the joint tile loader here and by
+None of the three sources alone supplies all three PLEM feature types:
+SpaceNet (datasets/spacenet.py) has road+building but no point class (no
+point-object class exists at SpaceNet's ~0.3-0.5m/px GSD); Potsdam
+(datasets/potsdam.py, with `extract_buildings=True`) has building+point but
+no road/linear class at all (its 6-class palette has no road color);
+SpaceNet6 (datasets/spacenet6.py, real SAR imagery -- the illumination-
+invariant half of PLEM's night/dark-image robustness approach) has building
+only, no road or point annotations. A genuinely joint 0D/1D/2D training run
+needs to combine all three, with each sample supervised only on the classes
+its *source* actually annotates -- this module is the single source of truth
+for that mapping, used both by the joint tile loader here and by
 losses/multitask.py::PLEMMultiTaskLoss's caller (the `class_mask` argument).
 
 Pure numpy-in/numpy-out at its boundary, consistent with datasets/'s existing
@@ -20,8 +23,9 @@ from pathlib import Path
 import numpy as np
 
 SOURCE_CLASSES = {
-    "spacenet": [1, 2],   # road, building -- no point annotations exist
-    "potsdam":  [2, 3],   # building, point -- no road annotations exist
+    "spacenet":  [1, 2],  # road, building -- no point annotations exist
+    "potsdam":   [2, 3],  # building, point -- no road annotations exist
+    "spacenet6": [2],     # building only -- SAR source has no road/point annotations
 }
 
 NUM_CLASSES = 4  # background, road, building, point
@@ -41,22 +45,28 @@ def class_mask_for_source(source: str, num_classes: int = NUM_CLASSES) -> np.nda
     return mask
 
 
-def load_joint_tiles(spacenet_dir="data/spacenet", potsdam_dir="data/potsdam") -> list:
+def load_joint_tiles(
+    spacenet_dir="data/spacenet", potsdam_dir="data/potsdam", spacenet6_dir="data/spacenet6",
+) -> list:
     """
     Loads every cached SpaceNet tile (`data/spacenet/<city>/*.npz`, built by
-    `spacenet_data_prep.ipynb`) and every cached Potsdam tile
+    `spacenet_data_prep.ipynb`), every cached Potsdam tile
     (`data/potsdam/*.npz`, built by `potsdam_data_prep.ipynb` with
-    `extract_buildings=True`), tagging each with its `source` and
-    `class_mask`. Mirrors `train_unet.ipynb`'s existing `all_tiles`
-    list-of-dicts loading pattern exactly, extended across two sources.
-    Missing/empty directories are skipped rather than raising, so this can
-    be called before either cache exists without special-casing the caller.
+    `extract_buildings=True`), and every cached SpaceNet6 tile
+    (`data/spacenet6/*.npz`, built by
+    `datasets/spacenet6.py::build_spacenet6_sample`), tagging each with its
+    `source` and `class_mask`. Mirrors `train_unet.ipynb`'s existing
+    `all_tiles` list-of-dicts loading pattern exactly, extended across three
+    sources. Missing/empty directories are skipped rather than raising, so
+    this can be called before any cache exists without special-casing the
+    caller.
 
     Returns a list of dicts: `{"tile", "image", "label", "source",
-    "class_mask"}` (plus `"city"` for SpaceNet tiles, `None` for Potsdam).
+    "class_mask"}` (plus `"city"` for SpaceNet tiles, `None` otherwise).
     """
     spacenet_dir = Path(spacenet_dir)
     potsdam_dir = Path(potsdam_dir)
+    spacenet6_dir = Path(spacenet6_dir)
     tiles = []
 
     if spacenet_dir.is_dir():
@@ -78,6 +88,15 @@ def load_joint_tiles(spacenet_dir="data/spacenet", potsdam_dir="data/potsdam") -
                 "city": None, "tile": p.stem,
                 "image": d["image"], "label": d["label"],
                 "source": "potsdam", "class_mask": class_mask_for_source("potsdam"),
+            })
+
+    if spacenet6_dir.is_dir():
+        for p in sorted(spacenet6_dir.glob("*.npz")):
+            d = np.load(p)
+            tiles.append({
+                "city": None, "tile": p.stem,
+                "image": d["image"], "label": d["label"],
+                "source": "spacenet6", "class_mask": class_mask_for_source("spacenet6"),
             })
 
     return tiles

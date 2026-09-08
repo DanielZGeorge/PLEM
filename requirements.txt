@@ -12,3 +12,4 @@ rasterio
 shapely
 kaggle
 torch
+tqdm
