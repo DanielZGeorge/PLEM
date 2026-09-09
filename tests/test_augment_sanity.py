@@ -84,6 +84,23 @@ class TestClahe:
         assert out.shape == img.shape
         assert out.dtype == np.uint8
 
+    def test_default_kernel_size_is_skimage_default(self):
+        # Regression: the param used to be `tile_grid=(8, 8)` passed straight to
+        # skimage's `kernel_size` (a *pixel* size, not a grid count), forcing
+        # 8-px context regions -- extreme local contrast and a big slowdown on
+        # the many training patches this runs on. Default must be None now.
+        import inspect
+        sig = inspect.signature(clahe)
+        assert "kernel_size" in sig.parameters
+        assert sig.parameters["kernel_size"].default is None
+        assert "tile_grid" not in sig.parameters
+
+    def test_explicit_kernel_size_still_works(self):
+        img = make_gradient_image((64, 64, 3))
+        out = clahe(img, kernel_size=32)
+        assert out.shape == img.shape and out.dtype == np.uint8
+        assert np.isfinite(out).all()
+
 
 class TestInjectSensorNoise:
     def test_output_finite_no_nan_inf(self):

@@ -70,16 +70,24 @@ def load_joint_tiles(
     tiles = []
 
     if spacenet_dir.is_dir():
-        for city_dir in sorted(spacenet_dir.iterdir()):
-            if not city_dir.is_dir():
-                continue
-            for p in sorted(city_dir.glob("*.npz")):
-                d = np.load(p)
-                tiles.append({
-                    "city": city_dir.name, "tile": p.stem,
-                    "image": d["image"], "label": d["label"],
-                    "source": "spacenet", "class_mask": class_mask_for_source("spacenet"),
-                })
+        # Expected layout is data/spacenet/<city>/*.npz (one level deep).
+        sn_paths = sorted(
+            p for city_dir in spacenet_dir.iterdir() if city_dir.is_dir()
+            for p in city_dir.glob("*.npz")
+        )
+        if not sn_paths:
+            # Fall back to a recursive scan so a cache written one level too
+            # deep (e.g. cache_dir passed with the city already appended, which
+            # build_spacenet_sample appends again -> <city>/<city>/*.npz) still
+            # loads instead of silently yielding zero SpaceNet tiles.
+            sn_paths = sorted(spacenet_dir.rglob("*.npz"))
+        for p in sn_paths:
+            d = np.load(p)
+            tiles.append({
+                "city": p.parent.name, "tile": p.stem,
+                "image": d["image"], "label": d["label"],
+                "source": "spacenet", "class_mask": class_mask_for_source("spacenet"),
+            })
 
     if potsdam_dir.is_dir():
         for p in sorted(potsdam_dir.glob("*.npz")):

@@ -57,7 +57,7 @@ def jitter_brightness_contrast_saturation(
     return np.array(img)
 
 
-def clahe(image: np.ndarray, clip_limit: float = 2.0, tile_grid=(8, 8)) -> np.ndarray:
+def clahe(image: np.ndarray, clip_limit: float = 2.0, kernel_size=None) -> np.ndarray:
     """
     Contrast-limited adaptive histogram equalization, applied per-channel.
     Models a night-capable camera's own auto-exposure/local-contrast
@@ -65,12 +65,19 @@ def clahe(image: np.ndarray, clip_limit: float = 2.0, tile_grid=(8, 8)) -> np.nd
     also locally contrast-stretched by the sensor/ISP -- so this is chained
     after the raw darkening steps in `simulate_low_light`, not a substitute
     for them.
+
+    `kernel_size` is skimage's `equalize_adapthist` contextual-region size *in
+    pixels* (NOT a tile-grid count -- an earlier version passed (8, 8) here,
+    which forced 8-px regions: ~16x more regions than skimage's default of 1/8
+    of each axis, giving both extreme local contrast and a large slowdown that
+    mattered because this runs on a large fraction of training patches every
+    epoch). `None` uses skimage's default.
     """
     normalized = image.astype(np.float64) / 255.0
     out = np.empty_like(normalized)
     for c in range(image.shape[-1]):
         out[..., c] = exposure.equalize_adapthist(
-            normalized[..., c], kernel_size=tile_grid, clip_limit=clip_limit / 100.0,
+            normalized[..., c], kernel_size=kernel_size, clip_limit=clip_limit / 100.0,
         )
     return np.clip(out * 255.0, 0, 255).astype(np.uint8)
 

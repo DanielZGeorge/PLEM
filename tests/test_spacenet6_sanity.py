@@ -22,13 +22,18 @@ from shapely.geometry import Polygon
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 import io
+import json
 import tarfile
 import tempfile
+
+import rasterio
+from affine import Affine as _Affine
 
 from datasets.spacenet6 import (
     sar_bands_to_pseudo_rgb,
     rasterize_sn6_tile_labels,
     extract_members_streaming,
+    build_spacenet6_sample,
 )
 from datasets.joint import class_mask_for_source, load_joint_tiles, SOURCE_CLASSES
 
@@ -141,6 +146,70 @@ class TestExtractMembersStreaming:
             out = os.path.join(d, "out")
             extract_members_streaming(tb, ["a.txt", "nope.txt"], out)
             assert os.path.exists(os.path.join(out, "a.txt"))
+
+
+class TestBuildSpacenet6Robustness:
+    """A2/A3: a bad tile must be skipped (not raised), and every tile's
+    extracted raw files must be cleaned whether it was cached or skipped."""
+
+    _T = _Affine(0.5, 0.0, 593556.98, 0.0, -0.5, 5752109.14)
+    _SAR_DIR = "train/AOI_11_Rotterdam/SAR-Intensity"
+    _BLD_DIR = "train/AOI_11_Rotterdam/geojson_buildings"
+
+    def _sar_bytes(self):
+        buf = io.BytesIO()
+        with rasterio.MemoryFile() as mem:
+            with mem.open(driver="GTiff", height=32, width=32, count=1,
+                          dtype="uint8", crs="EPSG:32631", transform=self._T) as ds:
+                ds.write((np.ones((32, 32)) * 40).astype("uint8"), 1)
+            buf.write(mem.read())
+        return buf.getvalue()
+
+    def _good_geojson(self):
+        # A building polygon well inside the 32x32 @ 0.5 m tile (16 m across).
+        x0, y0 = 593560.0, 5752100.0
+        poly = [[x0, y0], [x0, y0 - 6], [x0 + 6, y0 - 6], [x0 + 6, y0], [x0, y0]]
+        return json.dumps({
+            "type": "FeatureCollection",
+            "crs": {"type": "name", "properties": {"name": "urn:ogc:def:crs:EPSG::32631"}},
+            "features": [{"type": "Feature", "properties": {},
+                         "geometry": {"type": "Polygon", "coordinates": [poly]}}],
+        }).encode()
+
+    def _add(self, tf, name, data):
+        info = tarfile.TarInfo(name=name)
+        info.size = len(data)
+        tf.addfile(info, io.BytesIO(data))
+
+    def _make_tarball(self, path):
+        keys = ["20190822_tile_good", "20190822_tile_bad"]
+        with tarfile.open(path, "w:gz") as tf:
+            for k in keys:
+                self._add(tf, f"{self._SAR_DIR}/SN6_Train_AOI_11_Rotterdam_SAR-Intensity_{k}.tif",
+                          self._sar_bytes())
+            self._add(tf, f"{self._BLD_DIR}/SN6_Train_AOI_11_Rotterdam_Buildings_20190822_tile_good.geojson",
+                      self._good_geojson())
+            self._add(tf, f"{self._BLD_DIR}/SN6_Train_AOI_11_Rotterdam_Buildings_20190822_tile_bad.geojson",
+                      b"{ this is not valid json ")
+
+    def test_bad_tile_skipped_and_tmp_cleaned(self, tmp_path):
+        raw = tmp_path / "spacenet6_raw"
+        raw.mkdir()
+        tarball = raw / "SN6_buildings_AOI_11_Rotterdam_train.tar.gz"
+        self._make_tarball(tarball)
+
+        samples = build_spacenet6_sample(
+            n_tiles=10, cache_dir=str(tmp_path / "spacenet6"),
+            tarball_path=str(tarball), seed=0,
+        )
+
+        keys = {s["tile_key"] for s in samples}
+        assert "20190822_tile_good" in keys
+        assert "20190822_tile_bad" not in keys  # malformed geojson -> skipped, not raised
+
+        tmp_dir = raw / "_extract_tmp"
+        leaked = list(tmp_dir.rglob("*.tif")) + list(tmp_dir.rglob("*.geojson")) if tmp_dir.exists() else []
+        assert leaked == [], f"extracted raw files not cleaned up: {leaked}"
 
 
 class TestJointSpacenet6Integration:

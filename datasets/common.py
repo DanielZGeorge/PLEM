@@ -9,6 +9,9 @@ this package's.
 """
 
 import json
+import os
+import socket
+import time
 from pathlib import Path
 
 import numpy as np
@@ -19,21 +22,77 @@ from rasterio.warp import transform_geom
 from shapely.affinity import affine_transform
 from shapely.geometry import shape as shapely_shape
 
+# One pooled session for all downloads -- SN2/SN3 issue thousands of small GETs
+# and SN6 one 42 GB GET; a fresh TCP+TLS handshake per call is pure overhead.
+_SESSION = requests.Session()
+
+_DOWNLOAD_RETRIES = 3
+
+
+class _TruncatedDownload(IOError):
+    """Received fewer bytes than the response Content-Length promised."""
+
+
+# Transient conditions worth retrying. Deliberately excludes requests.HTTPError
+# (a 404/403 won't fix itself on retry, and callers already handle it).
+_RETRYABLE = (
+    requests.ConnectionError,
+    requests.Timeout,
+    requests.exceptions.ChunkedEncodingError,
+    socket.timeout,
+    _TruncatedDownload,
+)
+
 
 def download_file(url: str, dest, overwrite: bool = False) -> Path:
-    """Download `url` to `dest` via a plain anonymous HTTPS GET, unless it already exists."""
+    """
+    Download `url` to `dest` via a plain anonymous HTTPS GET, unless it already
+    exists. Streams to a unique `.part` sidecar and atomically renames on
+    success. Retries transient network errors up to `_DOWNLOAD_RETRIES` times
+    with backoff, and -- critically for the multi-GB SN6 tarball -- verifies the
+    received byte count against the response `Content-Length` before accepting
+    the file, so a server that closes the stream early (no exception raised)
+    does NOT get cached as a complete-but-truncated download that then fails
+    forever in `tarfile.open` / `rasterio.open` with the skip-guard preventing
+    re-download.
+    """
     dest = Path(dest)
     if dest.exists() and not overwrite:
         return dest
     dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_suffix(dest.suffix + ".part")
-    with requests.get(url, stream=True, timeout=60) as r:
-        r.raise_for_status()
-        with open(tmp, "wb") as f:
-            for chunk in r.iter_content(chunk_size=1 << 20):
-                f.write(chunk)
-    tmp.replace(dest)
-    return dest
+    # PID/host-qualify the sidecar so a concurrent prewarm job + notebook
+    # downloading the same file don't clobber each other's partial.
+    tmp = dest.with_suffix(dest.suffix + f".{socket.gethostname()}.{os.getpid()}.part")
+
+    last_err = None
+    for attempt in range(1, _DOWNLOAD_RETRIES + 1):
+        try:
+            with _SESSION.get(url, stream=True, timeout=60) as r:
+                r.raise_for_status()
+                expected = r.headers.get("Content-Length")
+                expected = int(expected) if expected is not None else None
+                written = 0
+                with open(tmp, "wb") as f:
+                    for chunk in r.iter_content(chunk_size=1 << 20):
+                        f.write(chunk)
+                        written += len(chunk)
+            if expected is not None and written != expected:
+                raise _TruncatedDownload(
+                    f"Truncated download for {url}: got {written} bytes, "
+                    f"expected {expected}"
+                )
+            tmp.replace(dest)
+            return dest
+        except _RETRYABLE as e:
+            last_err = e
+            tmp.unlink(missing_ok=True)
+            if attempt < _DOWNLOAD_RETRIES:
+                time.sleep(2 ** attempt)
+        except Exception:
+            tmp.unlink(missing_ok=True)
+            raise
+
+    raise last_err
 
 
 def load_geojson_features(geojson_path) -> list:

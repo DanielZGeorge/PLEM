@@ -66,6 +66,9 @@ def cbhm(
         "cldice_detail"        : per-class clDice dicts (each now also carries "n_gt")
         "bf_detail"            : per-class BF dicts (each now also carries "n_gt")
     """
+    linear_classes = list(linear_classes or [])
+    polygon_classes = list(polygon_classes or [])
+
     cldice_detail = cldice_multiclass(pred, gt, linear_classes)
     bf_detail = boundary_f1_multiclass(
         pred, gt, polygon_classes, tolerance=building_tolerance
@@ -77,8 +80,17 @@ def cbhm(
     cl_mean = float(np.mean(cldice_scores)) if cldice_scores else 0.0
     bf_mean = float(np.mean(bf_scores)) if bf_scores else 0.0
 
-    denom = cl_mean + bf_mean
-    score = float(2 * cl_mean * bf_mean / denom) if denom > 0 else 0.0
+    # When a whole feature type is absent from the request (e.g. a Potsdam or
+    # SpaceNet6 tile scored with no linear class at all), CBHM degenerates to
+    # the other type's score rather than collapsing to 0 -- the harmonic-mean
+    # zero-collapse is only meaningful when both types were actually asked for.
+    if not linear_classes and polygon_classes:
+        score = bf_mean
+    elif not polygon_classes and linear_classes:
+        score = cl_mean
+    else:
+        denom = cl_mean + bf_mean
+        score = float(2 * cl_mean * bf_mean / denom) if denom > 0 else 0.0
 
     cldice_weights = np.array([v["n_gt"] for v in cldice_detail.values()], dtype=float)
     bf_weights = np.array([v["n_gt"] for v in bf_detail.values()], dtype=float)
@@ -123,6 +135,8 @@ def evaluate_all(
     dtaf1_config: dict = None,
     building_tolerance: float = 2.0,
     point_tolerance: float = 5.0,
+    point_min_area: int = 1,
+    point_max_instances: int = 500,
 ) -> dict:
     """
     Run all metrics and return a consolidated report.
@@ -187,7 +201,8 @@ def evaluate_all(
     point_f1_mean = None
     if point_classes:
         point_detail = point_f1_multiclass(
-            pred, gt, point_classes, tolerance=point_tolerance
+            pred, gt, point_classes, tolerance=point_tolerance,
+            min_area=point_min_area, max_instances=point_max_instances,
         )
         point_f1_mean = float(
             np.mean([v["point_f1"] for v in point_detail.values()])

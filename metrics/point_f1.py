@@ -28,17 +28,43 @@ from scipy.optimize import linear_sum_assignment
 
 
 DEFAULT_TOLERANCE = 5  # pixels
+DEFAULT_MAX_INSTANCES = 500  # guardrail against speckle blow-up, not a real-data limit
+
+_MAX_INSTANCES_WARNED = False
 
 
-def _instance_centroids(mask: np.ndarray, min_area: int = 1) -> np.ndarray:
-    """Connected-component blobs in a binary mask -> (k, 2) array of (row, col) centroids."""
+def _instance_centroids(mask: np.ndarray, min_area: int = 1,
+                        max_instances: int = DEFAULT_MAX_INSTANCES) -> np.ndarray:
+    """
+    Connected-component blobs in a binary mask -> (k, 2) array of (row, col)
+    centroids.
+
+    `max_instances` bounds the cost of the downstream `cdist` +
+    `linear_sum_assignment`: a noisy/dark model prediction can scatter 10^4+
+    single-pixel components in the point channel, which would otherwise make a
+    dark-test sweep (severities x tiles) crawl. Real point-feature tiles carry
+    at most a few dozen instances, so hitting this cap means the input is
+    speckle -- the largest-area blobs are kept and a one-time warning printed.
+    """
     labeled, n = label(mask > 0)
     if n == 0:
         return np.zeros((0, 2))
     ids = np.arange(1, n + 1)
-    if min_area > 1:
+    if min_area > 1 or n > max_instances:
         sizes = ndi_sum(np.ones_like(labeled), labeled, index=ids)
-        ids = ids[sizes >= min_area]
+        if min_area > 1:
+            keep = sizes >= min_area
+            ids, sizes = ids[keep], sizes[keep]
+        if len(ids) > max_instances:
+            global _MAX_INSTANCES_WARNED
+            if not _MAX_INSTANCES_WARNED:
+                print(
+                    f"point_f1._instance_centroids: {len(ids)} components exceeds "
+                    f"max_instances={max_instances} -- keeping the {max_instances} "
+                    f"largest (input looks like speckle, not real point features)."
+                )
+                _MAX_INSTANCES_WARNED = True
+            ids = ids[np.argsort(sizes)[::-1][:max_instances]]
         if len(ids) == 0:
             return np.zeros((0, 2))
     return np.asarray(center_of_mass(mask > 0, labeled, ids)).reshape(-1, 2)
@@ -70,6 +96,7 @@ def point_f1(
     gt: np.ndarray,
     tolerance: float = DEFAULT_TOLERANCE,
     min_area: int = 1,
+    max_instances: int = DEFAULT_MAX_INSTANCES,
 ) -> dict:
     """
     Compute tolerance-radius instance F1 between a predicted and GT point mask.
@@ -100,8 +127,8 @@ def point_f1(
     p = pred > 0
     g = gt > 0
 
-    gt_c = _instance_centroids(g, min_area)
-    pred_c = _instance_centroids(p, min_area)
+    gt_c = _instance_centroids(g, min_area, max_instances)
+    pred_c = _instance_centroids(p, min_area, max_instances)
 
     n_gt = len(gt_c)
     n_pred = len(pred_c)
@@ -147,6 +174,7 @@ def point_f1_multiclass(
     point_classes: list,
     tolerance: float = DEFAULT_TOLERANCE,
     min_area: int = 1,
+    max_instances: int = DEFAULT_MAX_INSTANCES,
 ) -> dict:
     """
     Apply point_f1 to selected classes in a multiclass label map.
@@ -155,7 +183,7 @@ def point_f1_multiclass(
     """
     results = {}
     for cls in point_classes:
-        results[cls] = point_f1(pred == cls, gt == cls, tolerance, min_area)
+        results[cls] = point_f1(pred == cls, gt == cls, tolerance, min_area, max_instances)
     return results
 
 
@@ -165,8 +193,9 @@ def mean_point_f1(
     point_classes: list,
     tolerance: float = DEFAULT_TOLERANCE,
     min_area: int = 1,
+    max_instances: int = DEFAULT_MAX_INSTANCES,
 ) -> float:
     """Macro-average point_f1 over the specified point classes."""
-    per_class = point_f1_multiclass(pred, gt, point_classes, tolerance, min_area)
+    per_class = point_f1_multiclass(pred, gt, point_classes, tolerance, min_area, max_instances)
     scores = [v["point_f1"] for v in per_class.values()]
     return float(np.mean(scores)) if scores else 0.0

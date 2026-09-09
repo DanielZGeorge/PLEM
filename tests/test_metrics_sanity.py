@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from metrics.dtaf1 import dtaf1, dtaf1_road_building
 from metrics.cldice import cldice, mean_cldice
 from metrics.boundary_f1 import boundary_f1, iou, mean_boundary_f1
-from metrics.point_f1 import point_f1
+from metrics.point_f1 import point_f1, point_f1_multiclass, _instance_centroids
 from metrics.unified import cbhm, evaluate_all
 from metrics.apls import apls
 from metrics.dtaf1_topo import dtaf1_topo
@@ -695,3 +695,84 @@ class TestRoadBreakageRegression:
             assert scores[i] >= scores[i + 1] - 1e-9, (
                 f"APLS not monotonically decreasing: scores={scores}"
             )
+
+
+class TestPointInstanceCap:
+    """B2: a speckle-scattered point prediction must not blow up the matching
+    cost (10^4+ single-pixel components -> huge cdist / linear_sum_assignment).
+    _instance_centroids caps the instance count and keeps the largest blobs."""
+
+    def test_instance_count_is_capped(self):
+        rng = np.random.default_rng(0)
+        mask = np.zeros((256, 256), dtype=np.uint8)
+        # ~1200 isolated single pixels (spread so they don't touch).
+        ys = rng.choice(128, size=1200, replace=True) * 2
+        xs = rng.choice(128, size=1200, replace=True) * 2
+        mask[ys, xs] = 1
+        c = _instance_centroids(mask > 0, min_area=1, max_instances=500)
+        assert len(c) <= 500
+
+    def test_min_area_drops_speckle(self):
+        gt = np.zeros((64, 64), dtype=np.uint8)
+        gt[10:14, 10:14] = 3            # one real 4x4 blob
+        pred = gt.copy()
+        pred[40, 40] = 3               # + a 1px false positive
+        r_keep = point_f1_multiclass(pred, gt, [3], min_area=1)[3]
+        r_drop = point_f1_multiclass(pred, gt, [3], min_area=2)[3]
+        assert r_keep["n_pred"] == 2
+        assert r_drop["n_pred"] == 1
+        assert r_drop["point_f1"] == 1.0
+
+    def test_cap_does_not_change_normal_scale_result(self):
+        gt = np.zeros((64, 64), dtype=np.uint8)
+        for i in range(5):
+            gt[10 * i + 2:10 * i + 5, 5:8] = 3
+        pred = gt.copy()
+        a = point_f1_multiclass(pred, gt, [3], max_instances=500)[3]["point_f1"]
+        b = point_f1_multiclass(pred, gt, [3], max_instances=10_000)[3]["point_f1"]
+        assert a == b == 1.0
+
+
+class TestEvaluateAllEmptyLinearClasses:
+    """C1: scoring a road-less source (Potsdam / SpaceNet6) with
+    linear_classes=[] must reduce CBHM to the building score, not collapse it
+    to 0 the way a real road class scoring 0 does."""
+
+    def _scene(self):
+        gt = np.zeros((64, 64), dtype=np.uint8)
+        gt[20:44, 20:44] = 2          # a building
+        pred = gt.copy()
+        return pred, gt
+
+    def test_cbhm_equals_bf_mean_when_no_linear_class(self):
+        pred, gt = self._scene()
+        out = evaluate_all(pred, gt, linear_classes=[], polygon_classes=[2],
+                           point_classes=None, dtaf1_config={2: {"name": "building", "tolerance": 2}})
+        assert out["bf_mean"] > 0.9
+        assert abs(out["cbhm"] - out["bf_mean"]) < 1e-9
+        assert out["point_f1_mean"] is None
+
+    def test_cbhm_still_collapses_for_a_real_failing_linear_class(self):
+        # Contrast: a requested road class that scores 0 DOES collapse cbhm.
+        gt = np.zeros((64, 64), dtype=np.uint8)
+        gt[20:44, 20:44] = 2
+        gt[:, 32] = 1                 # a road GT that pred completely misses
+        pred = np.zeros_like(gt)
+        pred[20:44, 20:44] = 2
+        out = evaluate_all(pred, gt, linear_classes=[1], polygon_classes=[2],
+                           dtaf1_config={1: {"name": "road", "tolerance": 10},
+                                         2: {"name": "building", "tolerance": 2}})
+        assert out["cbhm"] == 0.0
+
+    def test_perfect_potsdam_like_tile_scores_high(self):
+        gt = np.zeros((64, 64), dtype=np.uint8)
+        gt[20:44, 20:44] = 2
+        gt[10, 10] = gt[50, 50] = 3
+        pred = gt.copy()
+        out = evaluate_all(pred, gt, linear_classes=[], polygon_classes=[2],
+                           point_classes=[3], point_min_area=1,
+                           dtaf1_config={2: {"name": "building", "tolerance": 2},
+                                         3: {"name": "point", "tolerance": 3}})
+        assert out["cbhm"] > 0.9
+        assert out["point_f1_mean"] == 1.0
+        assert out["dtaf1"] > 0.9

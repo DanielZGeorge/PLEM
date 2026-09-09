@@ -31,12 +31,14 @@ still only used via `mode="replicate"` (band 0 as intensity), so `pauli`
 mode stays unverified / `NotImplementedError`.
 """
 
+import json
 import re
 import tarfile
 from pathlib import Path
 
 import numpy as np
 import rasterio
+import rasterio.errors
 
 from datasets.common import (
     download_file,
@@ -270,9 +272,14 @@ def build_spacenet6_sample(
     rasterizes building-only labels, skips tiles with no building pixels
     landed (mirrors SN2/SN3's own skip rule in
     `datasets/spacenet.py::build_spacenet_sample`), and deletes the raw
-    extracted files immediately after caching the `.npz` -- only the tarball
-    itself stays cached under gitignored `data/`, so re-runs reopen the local
-    tarball rather than re-downloading.
+    extracted files after each tile (whether it was cached or skipped) so the
+    tmp dir never accumulates -- only the tarball itself stays cached under
+    gitignored `data/`, so re-runs reopen the local tarball rather than
+    re-downloading. Per-tile errors (unreadable raster, malformed geojson,
+    un-reprojectable footprint) are logged and skipped, not raised, so one bad
+    tile can't abort a build that has already paid for a multi-GB download; the
+    skipped-tile count is printed at the end so a systemic failure is visible
+    rather than silently returning an empty list.
     """
     tarball_path = Path(tarball_path)
     cache_dir = Path(cache_dir)
@@ -294,30 +301,45 @@ def build_spacenet6_sample(
         print(f"Extracting {len(pending)} SN6 members in one archive pass...")
         extract_members_streaming(tarball_path, pending, tmp_dir)
 
+    # A bad tile should skip, not crash a build that has already paid for the
+    # download. RasterioError covers the CRS-reprojection failure class
+    # ("PROJ: utm: Invalid latitude"); the others cover malformed geojson and
+    # degenerate geometry.
+    _skippable = (
+        KeyError, ValueError, json.JSONDecodeError,
+        rasterio.errors.RasterioError, rasterio.RasterioIOError,
+    )
+
     samples = []
+    n_skipped = 0
     for pair in chosen_pairs:
+        cache_path = cache_dir / f"sn6_{pair['tile_key']}.npz"
         try:
             sar_bands, crs, transform, shape, building_geoms, geom_crs = extract_sn6_tile(
                 tarball_path, pair["sar_member"], pair["building_member"], tmp_dir,
             )
-        except (KeyError, rasterio.RasterioIOError):
-            continue
+            label = rasterize_sn6_tile_labels(
+                shape, crs, transform, building_geoms, geom_crs=geom_crs,
+            )
+            if not (label == BUILDING_CLASS_ID).any():
+                continue
+            image = sar_bands_to_pseudo_rgb(sar_bands, mode=pseudo_rgb_mode)
 
-        label = rasterize_sn6_tile_labels(shape, crs, transform, building_geoms, geom_crs=geom_crs)
-        if not (label == BUILDING_CLASS_ID).any():
-            continue
-        image = sar_bands_to_pseudo_rgb(sar_bands, mode=pseudo_rgb_mode)
+            np.savez_compressed(cache_path, image=image, label=label)
+            samples.append({
+                "tile_key": pair["tile_key"], "path": str(cache_path),
+                "image": image, "label": label,
+            })
+        except _skippable as e:
+            n_skipped += 1
+            print(f"  SN6 tile {pair['tile_key']} skipped: {type(e).__name__}: {e}")
+            cache_path.unlink(missing_ok=True)  # drop any half-written cache
+        finally:
+            for member in (pair["sar_member"], pair["building_member"]):
+                extracted = tmp_dir / member
+                if extracted.exists():
+                    extracted.unlink()
 
-        cache_path = cache_dir / f"sn6_{pair['tile_key']}.npz"
-        np.savez_compressed(cache_path, image=image, label=label)
-        samples.append({
-            "tile_key": pair["tile_key"], "path": str(cache_path),
-            "image": image, "label": label,
-        })
-
-        for member in (pair["sar_member"], pair["building_member"]):
-            extracted = tmp_dir / member
-            if extracted.exists():
-                extracted.unlink()
-
+    if n_skipped:
+        print(f"SN6: {len(samples)} tiles cached, {n_skipped} skipped.")
     return samples
