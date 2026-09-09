@@ -294,6 +294,31 @@ class TestPointHeatmapLoss:
         heatmap = gt_centroids_to_heatmap(mask, sigma=2.0)
         assert heatmap.max().item() <= 1.0 + 1e-6
 
+    def test_fractional_centroid_still_supervised(self):
+        """Regression: a multi-pixel blob has a sub-pixel centroid, so the raw
+        Gaussian peaks BELOW 1.0 on the integer grid. The heatmap must still
+        contain a pixel == 1.0 (the nearest-integer peak stamp), otherwise
+        heatmap_focal_loss's positive term (gated on gt_heatmap >= 1.0) never
+        fires and a prediction that misses every GT point incurs ~0 loss --
+        the bug that made the real scaled run predict zero point pixels."""
+        m = np.zeros(SHAPE, dtype=np.int64)
+        m[10:12, 10:12] = 3  # 2x2 blob -> centroid (10.5, 10.5), fractional
+        target = to_batch(m)
+
+        hm = gt_centroids_to_heatmap((target == 3).float(), sigma=2.0)
+        assert abs(hm.max().item() - 1.0) < 1e-6, (
+            f"fractional-centroid blob must still stamp a peak == 1.0, got {hm.max().item():.4f}"
+        )
+
+        loss_fn = PointHeatmapLoss(point_classes=[3])
+        miss_loss = loss_fn(background_only_logits(), target).item()
+        assert miss_loss > 1.0, (
+            f"a prediction that misses every GT point should incur real positive loss, "
+            f"got {miss_loss:.4f} (positive focal term is dead)"
+        )
+        first, last = one_step_decreases(loss_fn, uniform_logits(), target)
+        assert last < first, f"{first:.4f} -> {last:.4f}"
+
 
 # ---------------------------------------------------------------------------
 # PLEMMultiTaskLoss (combined wrapper + class masking)

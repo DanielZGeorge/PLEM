@@ -41,7 +41,9 @@ def gt_centroids_to_heatmap(
     does at eval time, but here purely for TARGET construction, not inside
     the loss's gradient path. Overlapping Gaussians from nearby GT points are
     combined via elementwise max (standard CenterNet convention — avoids
-    peak inflation where points cluster).
+    peak inflation where points cluster). Each instance additionally stamps its
+    nearest integer pixel to exactly 1.0 so `heatmap_focal_loss`'s positive
+    term (gated on `gt_heatmap >= 1.0`) always fires — see the loop below.
 
     `max_instances` bounds worst-case cost: the per-centroid loop below does
     one full (H, W) Gaussian burn per instance, so a mask with a pathological
@@ -79,6 +81,21 @@ def gt_centroids_to_heatmap(
         for cy, cx in centroids:
             g = np.exp(-((yy - cy) ** 2 + (xx - cx) ** 2) / (2.0 * sigma ** 2))
             heatmaps[b] = np.maximum(heatmaps[b], g)
+            # Stamp the nearest integer pixel to EXACTLY 1.0. `center_of_mass`
+            # returns sub-pixel float coords for any blob wider than one pixel
+            # (i.e. essentially every real Potsdam tree/car blob), so the
+            # Gaussian above peaks at < 1.0 on the integer grid (e.g. ~0.977 for
+            # a 0.3 px centroid offset) and no pixel ever reaches 1.0.
+            # `heatmap_focal_loss` gates its ENTIRE positive term on
+            # `gt_heatmap >= 1.0`; without this stamp a fractional centroid gets
+            # zero positive supervision, the point channel receives only
+            # suppressive (push-to-zero) gradient, and the model learns to
+            # predict no point pixels at all — exactly what was observed on the
+            # first real train_unet_joint_scaled.ipynb run (0 predicted point
+            # px on every source; heatmap sub-term 1.13 -> 0.0004 after epoch 1).
+            ry = int(min(H - 1, max(0, round(float(cy)))))
+            rx = int(min(W - 1, max(0, round(float(cx)))))
+            heatmaps[b, ry, rx] = 1.0
 
     return torch.from_numpy(heatmaps).to(device=device, dtype=torch.float32)
 
@@ -96,8 +113,15 @@ def heatmap_focal_loss(
     (`gt_heatmap == 1`), reduced penalty near peaks (weighted by
     `(1 - gt_heatmap)^beta`), so near-misses are punished less than spurious
     detections far from any GT point. Sidesteps instance matching entirely.
-    Each sample is normalized by its own positive-peak count (falls back to
-    the raw negative-loss sum when a sample has zero GT points at all).
+
+    Normalized by the TOTAL positive-peak count across the whole batch (the
+    standard CenterNet reduction), not by a per-sample mean. This matters for
+    PLEM's mixed-source batches: only Potsdam tiles annotate the point class,
+    and of those only a minority contain any point instances, so a per-sample
+    `.mean()` divides the point signal by the full batch size (~20-40x here)
+    and the term is swamped by the CE/Dice base. Global normalization keeps the
+    gradient magnitude tied to how many points are actually in the batch.
+    Falls back to the raw loss sum when the batch has zero GT points at all.
     """
     pred = pred_heatmap.clamp(eps, 1 - eps)
     pos_mask = (gt_heatmap >= 1.0).float()
@@ -106,10 +130,9 @@ def heatmap_focal_loss(
     pos_loss = -((1 - pred) ** alpha) * torch.log(pred) * pos_mask
     neg_loss = -((1 - gt_heatmap) ** beta) * (pred ** alpha) * torch.log(1 - pred) * neg_mask
 
-    num_pos = pos_mask.sum(dim=(1, 2))
-    total = pos_loss.sum(dim=(1, 2)) + neg_loss.sum(dim=(1, 2))
-    per_sample = total / num_pos.clamp_min(1.0)
-    return per_sample.mean()
+    num_pos = pos_mask.sum()
+    total = pos_loss.sum() + neg_loss.sum()
+    return total / num_pos.clamp_min(1.0)
 
 
 class PointHeatmapLoss(nn.Module):
