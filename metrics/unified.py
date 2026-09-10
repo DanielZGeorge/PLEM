@@ -21,6 +21,8 @@ from metrics.cldice import mean_cldice, cldice_multiclass
 from metrics.boundary_f1 import mean_boundary_f1, boundary_f1_multiclass
 from metrics.point_f1 import point_f1_multiclass
 from metrics.dtaf1 import dtaf1, dtaf1_road_building  # re-export
+from metrics.dtaf1_topo import dtaf1_topo
+from metrics.apls import DEFAULT_N_PAIRS as _APLS_N_PAIRS, DEFAULT_SEED as _APLS_SEED
 
 
 def cbhm(
@@ -137,6 +139,8 @@ def evaluate_all(
     point_tolerance: float = 5.0,
     point_min_area: int = 1,
     point_max_instances: int = 500,
+    apls_n_pairs: int = _APLS_N_PAIRS,
+    apls_seed: int = _APLS_SEED,
 ) -> dict:
     """
     Run all metrics and return a consolidated report.
@@ -161,22 +165,35 @@ def evaluate_all(
     building_tolerance: positional tolerance (px) for BF score
     point_tolerance   : centroid-matching tolerance (px) for point_f1
 
+    apls_n_pairs      : control-point pair budget for the raster-skeleton APLS
+                        used by "dtaf1_topo" (see metrics/apls.py)
+    apls_seed         : RNG seed for deterministic APLS control-point sampling
+
     Returns
     -------
-    dict with keys: "cbhm", "cbhm_soft", "dtaf1", "dtaf1_weighted", "cldice_mean",
-    "bf_mean", "point_f1_mean", "per_class_detail". "point_f1_mean" is reported
-    as an independent figure alongside "cbhm" — CBHM's harmonic mean stays 2-way
-    (clDice, BF) by design, since it's an intentional foil ("harmonic mean
-    prevents either class from masking poor performance in the other"); folding
-    in an unbalanced 3rd class would blur that comparison. "point_f1_mean" is
-    None when point_classes is not given.
+    dict with keys: "cbhm", "cbhm_soft", "dtaf1", "dtaf1_weighted", "dtaf1_topo",
+    "dtaf1_topo_weighted", "cldice_mean", "bf_mean", "point_f1_mean",
+    "per_class_detail". "point_f1_mean" is reported as an independent figure
+    alongside "cbhm" — CBHM's harmonic mean stays 2-way (clDice, BF) by design,
+    since it's an intentional foil ("harmonic mean prevents either class from
+    masking poor performance in the other"); folding in an unbalanced 3rd class
+    would blur that comparison. "point_f1_mean" is None when point_classes is not
+    given.
 
-    "cbhm_soft" and "dtaf1_weighted" are additive, pixel-area-weighted companion
-    figures (see cbhm()/dtaf1() docstrings): "cbhm" and "dtaf1" themselves are
-    unchanged so existing callers/tests see identical values. "cbhm_soft" in
-    particular does not collapse to 0 when a single sparse class scores 0 (unlike
-    "cbhm"'s harmonic mean) — see CLAUDE.md's known-limitation note on sparse
-    real-data tiles.
+    "cbhm_soft", "dtaf1_weighted" and "dtaf1_topo" are additive companion
+    figures: "cbhm" and "dtaf1" themselves are unchanged so existing
+    callers/tests see identical values.
+      - "cbhm_soft"  — pixel-area-weighted arithmetic mean (see cbhm()); unlike
+        "cbhm"'s harmonic mean it does not collapse to 0 when one sparse class
+        scores 0 (CLAUDE.md's sparse-tile known limitation).
+      - "dtaf1_weighted" — GT-pixel-count-weighted mean of per-class DTAF1 F1.
+      - "dtaf1_topo"  — connectivity-aware: harmonic_mean(F1, raster-skeleton
+        APLS) replaces plain F1 for classes in `linear_classes`, closing DTAF1's
+        documented road-breakage blind spot (see metrics/dtaf1_topo.py). APLS
+        runs a skeleton-graph Dijkstra, so it is only computed when
+        `linear_classes` is non-empty; otherwise "dtaf1_topo" equals "dtaf1"
+        exactly (nothing to blend). per_class_detail["apls"] carries the
+        per-linear-class APLS result dicts.
     """
     if linear_classes is None:
         linear_classes = [1]
@@ -197,6 +214,21 @@ def evaluate_all(
     )
     dtaf1_result = dtaf1(pred, gt, dtaf1_config)
 
+    # DTAF1-Topo: identical to dtaf1() when there is no linear class to blend
+    # APLS into, so skip the (relatively costly) skeleton-graph Dijkstra then.
+    if linear_classes:
+        topo_result = dtaf1_topo(
+            pred, gt, dtaf1_config, linear_classes=linear_classes,
+            apls_n_pairs=apls_n_pairs, apls_seed=apls_seed,
+        )
+        dtaf1_topo_score = topo_result["dtaf1_topo"]
+        dtaf1_topo_weighted = topo_result["dtaf1_topo_weighted"]
+        apls_detail = topo_result["apls_detail"]
+    else:
+        dtaf1_topo_score = dtaf1_result["dtaf1"]
+        dtaf1_topo_weighted = dtaf1_result["dtaf1_weighted"]
+        apls_detail = {}
+
     point_detail = {}
     point_f1_mean = None
     if point_classes:
@@ -209,17 +241,20 @@ def evaluate_all(
         )
 
     return {
-        "cbhm":            cbhm_result["cbhm"],
-        "cbhm_soft":       cbhm_result["cbhm_soft"],
-        "dtaf1":           dtaf1_result["dtaf1"],
-        "dtaf1_weighted":  dtaf1_result["dtaf1_weighted"],
-        "cldice_mean":     cbhm_result["cldice_mean"],
-        "bf_mean":         cbhm_result["bf_mean"],
-        "point_f1_mean":   point_f1_mean,
+        "cbhm":                cbhm_result["cbhm"],
+        "cbhm_soft":           cbhm_result["cbhm_soft"],
+        "dtaf1":               dtaf1_result["dtaf1"],
+        "dtaf1_weighted":      dtaf1_result["dtaf1_weighted"],
+        "dtaf1_topo":          dtaf1_topo_score,
+        "dtaf1_topo_weighted": dtaf1_topo_weighted,
+        "cldice_mean":         cbhm_result["cldice_mean"],
+        "bf_mean":             cbhm_result["bf_mean"],
+        "point_f1_mean":       point_f1_mean,
         "per_class_detail": {
             "cldice":  cbhm_result["cldice_detail"],
             "bf":      cbhm_result["bf_detail"],
             "dtaf1":   dtaf1_result["per_class"],
+            "apls":    apls_detail,
             "point":   point_detail,
         },
     }
@@ -230,4 +265,5 @@ __all__ = [
     "evaluate_all",
     "dtaf1",
     "dtaf1_road_building",
+    "dtaf1_topo",
 ]

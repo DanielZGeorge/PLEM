@@ -776,3 +776,35 @@ class TestEvaluateAllEmptyLinearClasses:
         assert out["cbhm"] > 0.9
         assert out["point_f1_mean"] == 1.0
         assert out["dtaf1"] > 0.9
+
+
+class TestEvaluateAllDtaf1Topo:
+    """evaluate_all() now surfaces dtaf1_topo alongside dtaf1 (metrics/unified.py):
+    a no-op when linear_classes is empty, and the road-breakage fix when it isn't."""
+
+    def test_topo_equals_dtaf1_when_no_linear_class(self):
+        gt = np.zeros((64, 64), dtype=np.uint8)
+        gt[20:44, 20:44] = 2
+        pred = gt.copy()
+        out = evaluate_all(pred, gt, linear_classes=[], polygon_classes=[2],
+                           dtaf1_config={2: {"name": "building", "tolerance": 2}})
+        assert out["dtaf1_topo"] == out["dtaf1"]
+        assert out["dtaf1_topo_weighted"] == out["dtaf1_weighted"]
+        assert out["per_class_detail"]["apls"] == {}
+
+    def test_topo_collapses_under_road_breakage_via_evaluate_all(self):
+        gt = np.zeros((128, 128), dtype=np.uint8)
+        gt[:, 62:66] = 1
+        gt[20:44, 90:114] = 2
+        rng = np.random.default_rng(42)
+        road_px = np.argwhere(gt == 1)
+        pred = gt.copy()
+        idx = rng.choice(len(road_px), int(0.75 * len(road_px)), replace=False)
+        for r, c in road_px[idx]:
+            pred[r, c] = 0
+        cfg = {1: {"name": "road", "tolerance": 10}, 2: {"name": "building", "tolerance": 2}}
+        out = evaluate_all(pred, gt, linear_classes=[1], polygon_classes=[2],
+                           dtaf1_config=cfg)
+        assert out["dtaf1"] > 0.9            # documented blind spot
+        assert out["dtaf1_topo"] < out["dtaf1"]
+        assert out["per_class_detail"]["apls"][1]["apls"] < 0.5
