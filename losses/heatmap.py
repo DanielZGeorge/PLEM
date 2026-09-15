@@ -114,14 +114,33 @@ def heatmap_focal_loss(
     `(1 - gt_heatmap)^beta`), so near-misses are punished less than spurious
     detections far from any GT point. Sidesteps instance matching entirely.
 
-    Normalized by the TOTAL positive-peak count across the whole batch (the
-    standard CenterNet reduction), not by a per-sample mean. This matters for
-    PLEM's mixed-source batches: only Potsdam tiles annotate the point class,
-    and of those only a minority contain any point instances, so a per-sample
-    `.mean()` divides the point signal by the full batch size (~20-40x here)
-    and the term is swamped by the CE/Dice base. Global normalization keeps the
-    gradient magnitude tied to how many points are actually in the batch.
-    Falls back to the raw loss sum when the batch has zero GT points at all.
+    The positive term is normalized by the TOTAL positive-peak count across
+    the whole batch (the standard CenterNet reduction), not by a per-sample
+    mean. This matters for PLEM's mixed-source batches: only Potsdam tiles
+    annotate the point class, and of those only a minority contain any point
+    instances, so a per-sample `.mean()` divides the rare positive signal by
+    the full batch size (~20-40x here) and it gets swamped by the CE/Dice
+    base. Global per-instance normalization keeps that signal's magnitude
+    tied to how many points are actually in the batch, undiluted.
+
+    The negative term is normalized separately, by pixel count (a plain
+    mean), NOT by the same `num_pos`. CenterNet's original formula divides
+    both terms by keypoint count, which is safe on the small, stride-reduced
+    heatmap it was designed for (few positives, but also few total pixels).
+    PLEM applies this at full patch resolution (e.g. 256x256, un-downsampled)
+    to a batch-wide sum that can reach millions of pixels, so `neg_loss.sum()
+    / num_pos` blows up whenever a batch has very few (or exactly one) peak
+    pixels -- confirmed on the real train_unet_joint_scaled.ipynb run: with
+    `num_pos` in the single digits on some batches, this term reached 58.59
+    (vs. ~1.85 for the CE+Dice base) in epoch 1 alone, ~97% of that epoch's
+    total backprop signal, destabilizing the shared encoder before the
+    geometry-aware terms (tolerance/clDice) ever got a chance to learn --
+    they stayed flat for the entire 27-epoch run, and the building channel
+    (supervised by an unrelated loss term, sharing only the trunk) collapsed
+    to 0 predicted pixels on every source as collateral damage. Normalizing
+    the negative term by its own (always-large, never-near-zero) pixel count
+    bounds it to a per-pixel-average scale regardless of how rare positives
+    are, without diluting the positive term's undiluted per-instance signal.
     """
     pred = pred_heatmap.clamp(eps, 1 - eps)
     pos_mask = (gt_heatmap >= 1.0).float()
@@ -131,8 +150,8 @@ def heatmap_focal_loss(
     neg_loss = -((1 - gt_heatmap) ** beta) * (pred ** alpha) * torch.log(1 - pred) * neg_mask
 
     num_pos = pos_mask.sum()
-    total = pos_loss.sum() + neg_loss.sum()
-    return total / num_pos.clamp_min(1.0)
+    num_neg = neg_mask.sum().clamp_min(1.0)
+    return pos_loss.sum() / num_pos.clamp_min(1.0) + neg_loss.sum() / num_neg
 
 
 class PointHeatmapLoss(nn.Module):
