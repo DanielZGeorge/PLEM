@@ -23,11 +23,123 @@
   year         = {2018}
 }
 
+%% Challenge-series overview paper; also the citation anchor for the SpaceNet 1-3 winning-score
+%% figures used as motivational-baseline numbers in Section 2 (exact scores reported on the
+%% CosmiQ Works / DownLinQ challenge-results blog, not in this paper itself -- named in-text).
+@misc{vanetten2018spacenet,
+  title         = {{SpaceNet}: A Remote Sensing Dataset and Challenge Series},
+  author        = {Van Etten, Adam and Lindenbaum, Dave and Bacastow, Todd M.},
+  year          = {2018},
+  eprint        = {1807.01232},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV}
+}
+
+%% CRESI: best-known raster-to-graph road pipeline result (APLS 0.69 +/- 0.02), cited as a
+%% motivational-baseline number in Section 2.4.
+@misc{vanetten2019cresi,
+  title         = {City-Scale Road Extraction from Satellite Imagery v2: Road Speeds and Travel
+                   Times},
+  author        = {Van Etten, Adam},
+  year          = {2019},
+  eprint        = {1908.09715},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV}
+}
+
+%% DeepGlobe 2018 Road Extraction Challenge winner; pixel-IoU ceiling (0.6466 val / 0.6342 test)
+%% cited in Section 2.4 as evidence plain IoU says nothing about connectivity.
+@inproceedings{zhou2018dlinknet,
+  title     = {{D}-{L}ink{N}et: {L}ink{N}et with {P}retrained {E}ncoder and {D}ilated
+               {C}onvolution for {H}igh {R}esolution {S}atellite {I}magery {R}oad {E}xtraction},
+  author    = {Zhou, Lichen and Zhang, Chuang and Wu, Ming},
+  booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition
+               (CVPR) Workshops},
+  publisher = {IEEE},
+  pages     = {182--186},
+  year      = {2018}
+}
+
+%% TOPO: the topology-only sibling to APLS (local reachable-subgraph precision/recall/F1).
+%% Citation target named in Section 2.4's original scaffold.
+@article{biagioni2012topo,
+  title   = {Inferring Road Maps from Global Positioning System Traces},
+  author  = {Biagioni, James and Eriksson, Jakob},
+  journal = {Transportation Research Record},
+  volume  = {2291},
+  number  = {1},
+  pages   = {61--71},
+  year    = {2012}
+}
+
 @misc{isprs-potsdam,
   title        = {{ISPRS} {P}otsdam 2D {S}emantic {L}abeling {D}ataset},
   author       = {{ISPRS Working Group II/4}},
   howpublished = {ISPRS 2D Semantic Labeling Contest},
   year         = {2018}
+}
+
+%% Benchmark definition paper for the ISPRS 2D Semantic Labeling dataset (Potsdam/Vaihingen).
+@inproceedings{rottensteiner2012isprs,
+  title     = {The {ISPRS} Benchmark on Urban Object Classification and {3D} Building
+               Reconstruction},
+  author    = {Rottensteiner, Franz and Sohn, Gunho and Jung, Jaewook and Gerke, Markus and
+               Baillard, Caroline and Benitez, Sebastien and Breitkopf, Uwe},
+  booktitle = {ISPRS Annals of the Photogrammetry, Remote Sensing and Spatial Information
+               Sciences},
+  volume    = {I-3},
+  pages     = {293--298},
+  year      = {2012}
+}
+
+%% Results/follow-up paper; source of the mIoU/F1 benchmark figures cited as motivational-baseline
+%% numbers alongside modern SOTA (A2-FPN) in Section 2.1/2.4.
+@article{rottensteiner2014isprs,
+  title   = {Results of the {ISPRS} Benchmark on Urban Object Detection and {3D} Building
+             Reconstruction},
+  author  = {Rottensteiner, Franz and Sohn, Gunho and Gerke, Markus and Wegner, Jan D. and
+             Breitkopf, Uwe and Jung, Jaewook},
+  journal = {ISPRS Journal of Photogrammetry and Remote Sensing},
+  volume  = {93},
+  pages   = {256--271},
+  year    = {2014}
+}
+
+%% IoU-family incumbent-convention citation target named in Section 2.1's original scaffold.
+@article{everingham2010pascalvoc,
+  title   = {The {P}ascal {V}isual {O}bject {C}lasses ({VOC}) Challenge},
+  author  = {Everingham, Mark and Van Gool, Luc and Williams, Christopher K. I. and Winn, John and
+             Zisserman, Andrew},
+  journal = {International Journal of Computer Vision},
+  volume  = {88},
+  number  = {2},
+  pages   = {303--338},
+  year    = {2010}
+}
+
+%% IoU-family incumbent-convention citation target named in Section 2.1's original scaffold.
+@inproceedings{cordts2016cityscapes,
+  title     = {The {C}ityscapes {D}ataset for {S}emantic {U}rban {S}cene {U}nderstanding},
+  author    = {Cordts, Marius and Omran, Mohamed and Ramos, Sebastian and Rehfeld, Timo and
+               Enzweiler, Markus and Benenson, Rodrigo and Franke, Uwe and Roth, Stefan and
+               Schiele, Bernt},
+  booktitle = {Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition
+               (CVPR)},
+  publisher = {IEEE},
+  pages     = {3213--3223},
+  year      = {2016}
+}
+
+%% Point/instance-metric citation target (COCO-style average precision) named in Section 2.5's
+%% original scaffold, alongside the already-cited Hungarian-assignment paper.
+@misc{lin2014coco,
+  title         = {{M}icrosoft {COCO}: {C}ommon {O}bjects in {C}ontext},
+  author        = {Lin, Tsung-Yi and Maire, Michael and Belongie, Serge and Hays, James and
+                   Perona, Pietro and Ramanan, Deva and Doll{\'a}r, Piotr and Zitnick, C. Lawrence},
+  year          = {2014},
+  eprint        = {1405.0312},
+  archivePrefix = {arXiv},
+  primaryClass  = {cs.CV}
 }
 
 @article{kuhn1955hungarian,

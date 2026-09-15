@@ -184,24 +184,50 @@ limitation and open item raised anywhere in the paper into one place. §12 concl
 
 ---
 
-## 2. Related Work *(draft later — scaffold only, per prior instruction)*
-
-Each subsection below is left as a scaffold with a named citation target, so prose can be dropped
-in without restructuring.
+## 2. Related Work
 
 - **2.1 IoU-family segmentation metrics** — the region-overlap baseline this paper argues against
-  for linear features; standard semantic-segmentation benchmarks (Cityscapes, PASCAL VOC) as the
-  incumbent evaluation convention.
+  for linear features. Region-overlap IoU is the incumbent evaluation convention across
+  general-purpose semantic-segmentation benchmarks — PASCAL VOC (Everingham et al., IJCV 2010) and
+  Cityscapes (Cordts et al., CVPR 2016) — neither of which contains a thin, 1-pixel-wide linear
+  class, so neither benchmark's own leaderboard practice had to confront IoU's road-width
+  sensitivity at all. **Motivational baseline (see also 2.4):** on the ISPRS Potsdam benchmark
+  (Rottensteiner et al., ISPRS Annals 2012 / ISPRS J. Photogramm. 2014), which *does* include a
+  building class close in kind to PLEM's polygon classes, modern models report mean IoU up to
+  ~86% and mean F1 up to ~92% (e.g. A²-FPN) — i.e. plain region-overlap metrics are already
+  near-saturated on well-behaved polygon classes. This is the same "good-looking score, hidden
+  failure mode" pattern §2.4's road numbers show more starkly, and is why this paper does not treat
+  a high IoU/F1 figure alone as evidence a metric is adequate for PLEM's target feature types.
 - **2.2 Topology-/skeleton-aware metrics for linear structures** — clDice and related centerline
-  methods. *Citation target: Shit et al., CVPR 2021.*
-- **2.3 Boundary-based metrics for polygonal features** — Boundary F1 / BF score.
-  *Citation target: Csurka et al., BMVC 2013.*
-- **2.4 Road-network extraction and connectivity metrics** — APLS, TOPO, and the SpaceNet
-  road-extraction challenge line of work that motivates §3.5/§6.
-  *Citation target: the SpaceNet APLS metric definition.*
-- **2.5 Point/instance detection metrics** — COCO-style average precision, and the optimal
-  bipartite-matching literature underlying `point_f1`'s Hungarian assignment.
-  *Citation target: Kuhn, 1955 (the Hungarian algorithm).*
+  methods (Shit et al., CVPR 2021).
+- **2.3 Boundary-based metrics for polygonal features** — Boundary F1 / BF score
+  (Csurka et al., BMVC 2013).
+- **2.4 Road-network extraction and connectivity metrics** — APLS (the SpaceNet road-extraction
+  challenge metric; Van Etten et al., arXiv:1807.01232, 2018) and TOPO (Biagioni & Eriksson,
+  Transportation Research Record 2291, 2012), the two dominant graph-connectivity metrics for
+  linear road networks, motivate §3.5/§6's `apls`/`dtaf1_topo` primitives. **Motivational
+  baseline:** published road-extraction leaderboards plateau well short of 1.0 even at their best —
+  SpaceNet Challenge 3's winning submission scored APLS 0.666 (field topped out ≈0.67); CRESI, the
+  best-known raster-to-graph pipeline, reaches APLS 0.69 ± 0.02 (Van Etten, arXiv:1908.09715,
+  2019); D-LinkNet, winner of the DeepGlobe 2018 Road Extraction Challenge, reports pixel-IoU
+  0.647 (val) / 0.634 (test) (Zhou et al., CVPR Workshops 2018) — a *pixel*-only ceiling that says
+  nothing about whether the extracted network stays connected. SpaceNet's building-footprint
+  challenges show the same pattern from the other direction: the first SpaceNet building challenge
+  topped out at F1 0.26, and the four-city SpaceNet 2 challenge's winner reached F1 0.693 averaged
+  across cities (both per Van Etten et al., arXiv:1807.01232, 2018, and the associated challenge
+  results reporting). These are cited here as **motivating context, not as numbers PLEM's own
+  trained models are benchmarked against** — PLEM's `train_unet_joint*.ipynb` runs evaluate a small
+  curated tile subset under this repo's own protocol, not the official SpaceNet/DeepGlobe/Potsdam
+  test sets, so the two sets of numbers are not directly comparable. The point of citing them is
+  narrower and stronger than a leaderboard comparison: even the *best* published pixel/topology
+  scores on real road and building extraction plateau in the 0.26–0.93 range depending on class and
+  difficulty, and a single scalar in that range cannot by itself distinguish "scattered pixel noise
+  within tolerance" from "a genuinely fragmented network" — exactly the gap `dtaf1_topo`/`apls`
+  close (see the road-breakage finding under `metrics/` above, where `dtaf1` stays pinned at 1.0
+  under 75% real road-pixel deletion while `dtaf1_topo`/`apls` collapse sharply).
+- **2.5 Point/instance detection metrics** — COCO-style average precision (Lin et al.,
+  arXiv:1405.0312, 2014) and the optimal bipartite-matching literature underlying `point_f1`'s
+  Hungarian assignment (Kuhn, 1955).
 - **2.6 Composite / multi-task segmentation evaluation** — positions the gap PLEM's *evaluation*
   half fills: existing work evaluates linear and polygonal feature types with separate,
   non-comparable metrics rather than a single class-agnostic formula (DTAF1) plus a deliberately
