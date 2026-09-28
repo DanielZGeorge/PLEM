@@ -431,3 +431,49 @@ class TestPLEMMultiTaskLoss:
         other_channel_grad = logits.grad[:, :3].abs().max().item()
         assert point_channel_grad < 1e-3, f"masked point-channel gradient should be ~0, got {point_channel_grad:.6f}"
         assert other_channel_grad > 1e-6, "unmasked channels should still receive a real gradient"
+
+    def test_point_suppress_off_by_default(self):
+        """Default weights leave the suppress term out entirely, so the masking
+        guarantees above (and train_unet_joint.ipynb's loss) are unchanged."""
+        out = self._make_loss()(uniform_logits(), GT3_BATCH, torch.tensor([[1.0, 1.0, 1.0, 0.0]]))
+        assert "point_suppress" not in out
+
+    def test_point_suppress_pushes_point_down_on_unannotated_sources_only(self):
+        """Regression (run 3 of train_unet_joint_scaled.ipynb): with the term on,
+        a SpaceNet-like sample (point class masked) must get a real gradient
+        pushing its point logit DOWN, while a Potsdam-like sample (point class
+        annotated) gets no contribution from this term."""
+        loss_fn = PLEMMultiTaskLoss(
+            class_config={1: {"name": "road", "tolerance": 6}, 2: {"name": "building", "tolerance": 2}},
+            linear_classes=[1], polygon_classes=[2], point_classes=[3],
+            weights={"point_suppress": 0.1},
+        )
+        logits = uniform_logits().clone()
+        logits[:, 3] += 2.0  # confident "point" everywhere, like run 3 on SpaceNet
+        logits.requires_grad_(True)
+
+        road_building = to_batch(combine(ROAD, BUILDING))
+        out = loss_fn(logits, road_building, torch.tensor([[1.0, 1.0, 1.0, 0.0]]))
+        assert out["point_suppress"] > 0.5, f"confident point on unannotated source should be penalized, got {out['point_suppress']:.4f}"
+        out["loss"].backward()
+        assert_finite(logits.grad)
+        assert logits.grad[:, 3].mean().item() > 0, "gradient must push the point logit down (positive grad)"
+
+        term = loss_fn._point_suppress(logits.detach(), torch.tensor([[1.0, 0.0, 1.0, 1.0]]))
+        assert term.item() == 0.0, "point-annotating samples must not be suppressed"
+
+    def test_point_suppress_preserves_non_point_ordering(self):
+        """Only the point probability should move: the term's gradient on the
+        other channels is proportional to their own share, so their argmax
+        (road/building/background) is unchanged by a small step."""
+        loss_fn = PLEMMultiTaskLoss(
+            class_config={}, linear_classes=[], polygon_classes=[], point_classes=[3],
+            weights={"point_suppress": 1.0},
+        )
+        torch.manual_seed(0)
+        logits = (torch.randn(1, NUM_CLASSES, *SHAPE) + torch.tensor([0, 0, 0, 2.0]).view(1, -1, 1, 1)).requires_grad_(True)
+        mask = torch.tensor([[1.0, 1.0, 1.0, 0.0]])
+        loss_fn._point_suppress(logits, mask).backward()
+        stepped = logits.detach() - 0.5 * logits.grad
+        assert torch.equal(stepped[:, :3].argmax(1), logits.detach()[:, :3].argmax(1))
+        assert torch.softmax(stepped, 1)[:, 3].mean() < torch.softmax(logits.detach(), 1)[:, 3].mean()

@@ -56,8 +56,10 @@ class PLEMMultiTaskLoss(nn.Module):
     linear_classes  : e.g. [1] (road) — supervised by ToleranceBandLoss + SoftClDiceLoss.
     polygon_classes : e.g. [2] (building) — supervised by ToleranceBandLoss only.
     point_classes   : e.g. [3] (point) — supervised by PointHeatmapLoss only.
-    weights         : optional {"ce_dice", "tolerance", "cldice", "heatmap": float}
-                       overriding the default 1.0 weight on each term.
+    weights         : optional {"ce_dice", "tolerance", "cldice", "heatmap",
+                       "point_suppress": float} overriding each term's default
+                       weight (1.0, except "point_suppress" which defaults to
+                       0.0 = off; see `_point_suppress`).
 
     forward(logits, target, class_mask) returns a dict with "loss" (the
     total, for `.backward()`) plus each active sub-term as a detached float
@@ -89,7 +91,8 @@ class PLEMMultiTaskLoss(nn.Module):
         self.cldice_loss = SoftClDiceLoss(self.linear_classes) if self.linear_classes else None
         self.heatmap_loss = PointHeatmapLoss(self.point_classes) if self.point_classes else None
 
-        self.weights = {"ce_dice": 1.0, "tolerance": 1.0, "cldice": 1.0, "heatmap": 1.0}
+        self.weights = {"ce_dice": 1.0, "tolerance": 1.0, "cldice": 1.0, "heatmap": 1.0,
+                        "point_suppress": 0.0}
         if weights:
             self.weights.update(weights)
 
@@ -113,6 +116,43 @@ class PLEMMultiTaskLoss(nn.Module):
 
         return ce + dice
 
+    def _point_suppress(self, logits: torch.Tensor, class_mask: torch.Tensor) -> torch.Tensor:
+        """
+        Weak "no points here" prior on samples whose source does NOT annotate a
+        point class: mean BCE-toward-0, `-log(1 - p_point)`, of the point
+        class's softmax probability, computed on the RAW (unmasked) logits --
+        i.e. the same 4-way softmax prediction sees at inference.
+
+        Why it exists: `_mask_logits` gives a masked channel no gradient at
+        all, which is right for road on Potsdam (roads there are merely
+        unlabelled) but left the point channel completely unconstrained on
+        SpaceNet/SpaceNet6 imagery (~90% of training patches). On the third
+        real train_unet_joint_scaled.ipynb run it became confident "point"
+        over large parts of those sources and flooded predictions. This trades
+        a known label-noise cost (SpaceNet does contain unlabelled trees/cars)
+        for suppressing that; point_f1 is never scored on those sources, and
+        Potsdam's positive supervision still defines what a point looks like.
+
+        The gradient on the non-point logits is `p_k - p_k / (1 - p_point)`,
+        proportional to each one's own share, so it lowers the point
+        probability without reordering road/building/background. Off by
+        default (weight 0.0) so existing callers and masking guarantees are
+        unchanged.
+        """
+        log_probs = torch.log_softmax(logits.float(), dim=1)
+        losses = []
+        for c in self.point_classes:
+            unannotated = (class_mask[:, c] == 0)
+            if not unannotated.any():
+                continue
+            # log(1 - p_c) = logsumexp over the other channels' log-probs, stable.
+            others = torch.cat([log_probs[:, :c], log_probs[:, c + 1:]], dim=1)
+            log_not_c = torch.logsumexp(others, dim=1)  # (B, H, W)
+            losses.append(-log_not_c[unannotated].mean())
+        if not losses:
+            return torch.zeros((), device=logits.device)
+        return torch.stack(losses).mean()
+
     def forward(self, logits: torch.Tensor, target: torch.Tensor, class_mask: torch.Tensor) -> dict:
         masked_logits = _mask_logits(logits, class_mask)
 
@@ -126,6 +166,9 @@ class PLEMMultiTaskLoss(nn.Module):
             # samples; logit masking alone zeroes masked samples' contribution but
             # would still count their pixels in the negative term's denominator.
             terms["heatmap"] = self.heatmap_loss(masked_logits, target, class_mask)
+            if self.weights.get("point_suppress", 0.0) > 0:
+                # Deliberately on the UNMASKED logits -- see _point_suppress.
+                terms["point_suppress"] = self._point_suppress(logits, class_mask)
 
         total = sum(self.weights.get(name, 1.0) * value for name, value in terms.items())
 
