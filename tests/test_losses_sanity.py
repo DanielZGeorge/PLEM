@@ -319,6 +319,30 @@ class TestPointHeatmapLoss:
         first, last = one_step_decreases(loss_fn, uniform_logits(), target)
         assert last < first, f"{first:.4f} -> {last:.4f}"
 
+    def test_masked_samples_do_not_dilute_loss(self):
+        """Regression (run 3 of train_unet_joint_scaled.ipynb): samples whose
+        source doesn't annotate the point class (class_mask[:, 3] == 0) must not
+        count toward the negative term's pixel normalizer. Otherwise adding
+        non-point-source samples to a batch shrinks the point channel's
+        suppression signal, and the unsuppressed channel floods predictions."""
+        loss_fn = PointHeatmapLoss(point_classes=[3])
+        logits = uniform_logits()  # point prob 0.25 everywhere -> real negative loss
+        alone = loss_fn(logits, GT3_BATCH, torch.tensor([[1, 0, 1, 1]])).item()
+
+        # Same point sample plus 7 non-point-source samples, point channel masked
+        # to -1e4 on them exactly as PLEMMultiTaskLoss's _mask_logits does.
+        n_extra = 7
+        extra_logits = uniform_logits().repeat(n_extra, 1, 1, 1)
+        extra_logits[:, 3] = -1e4
+        batch_logits = torch.cat([logits, extra_logits])
+        batch_target = torch.cat([GT3_BATCH, torch.zeros_like(GT3_BATCH).repeat(n_extra, 1, 1)])
+        batch_mask = torch.tensor([[1, 0, 1, 1]] + [[1, 1, 1, 0]] * n_extra)
+        mixed = loss_fn(batch_logits, batch_target, batch_mask).item()
+
+        assert abs(mixed - alone) < 1e-5, (
+            f"non-point-source samples changed the point loss: alone={alone:.5f} mixed={mixed:.5f}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # PLEMMultiTaskLoss (combined wrapper + class masking)

@@ -106,6 +106,7 @@ def heatmap_focal_loss(
     alpha: float = 2.0,
     beta: float = 4.0,
     eps: float = 1e-6,
+    sample_mask: torch.Tensor = None,
 ) -> torch.Tensor:
     """
     (B, H, W), (B, H, W) -> scalar. Penalty-reduced pixelwise focal loss
@@ -141,10 +142,22 @@ def heatmap_focal_loss(
     the negative term by its own (always-large, never-near-zero) pixel count
     bounds it to a per-pixel-average scale regardless of how rare positives
     are, without diluting the positive term's undiluted per-instance signal.
+
+    `sample_mask` (optional, (B,) 0/1) marks which samples actually annotate
+    this point class. Samples with 0 are excluded from BOTH terms and from
+    both normalizers. Without it, `num_neg` also counted every pixel of the
+    class-masked SpaceNet/SpaceNet6 samples (~90% of a mixed batch, where the
+    masked prob is ~0 and contributes nothing), diluting the real negative
+    signal ~15-20x -- found on the third real train_unet_joint_scaled.ipynb
+    run, where the point channel, left almost unsuppressed, flooded ~half of
+    all SpaceNet test pixels at inference and stole road/building pixels.
     """
     pred = pred_heatmap.clamp(eps, 1 - eps)
-    pos_mask = (gt_heatmap >= 1.0).float()
-    neg_mask = 1.0 - pos_mask
+    valid = torch.ones_like(gt_heatmap)
+    if sample_mask is not None:
+        valid = valid * sample_mask.to(gt_heatmap.dtype).view(-1, 1, 1)
+    pos_mask = (gt_heatmap >= 1.0).float() * valid
+    neg_mask = valid - pos_mask
 
     pos_loss = -((1 - pred) ** alpha) * torch.log(pred) * pos_mask
     neg_loss = -((1 - gt_heatmap) ** beta) * (pred ** alpha) * torch.log(1 - pred) * neg_mask
@@ -169,7 +182,10 @@ class PointHeatmapLoss(nn.Module):
         self.alpha = alpha
         self.beta = beta
 
-    def forward(self, logits: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    def forward(self, logits: torch.Tensor, target: torch.Tensor, class_mask: torch.Tensor = None) -> torch.Tensor:
+        """`class_mask` (optional, (B, C) 0/1): per-sample annotated classes,
+        as passed to PLEMMultiTaskLoss -- restricts each point class's loss to
+        samples whose source annotates it (see `heatmap_focal_loss`)."""
         if not self.point_classes:
             return torch.zeros((), device=logits.device)
         probs = torch.softmax(logits, dim=1)
@@ -179,5 +195,8 @@ class PointHeatmapLoss(nn.Module):
             gt_mask_c = (target == c).float()
             with torch.no_grad():
                 gt_heatmap = gt_centroids_to_heatmap(gt_mask_c, self.sigma)
-            losses.append(heatmap_focal_loss(probs[:, c], gt_heatmap, self.alpha, self.beta))
+            sample_mask = class_mask[:, c] if class_mask is not None else None
+            losses.append(heatmap_focal_loss(
+                probs[:, c], gt_heatmap, self.alpha, self.beta, sample_mask=sample_mask,
+            ))
         return torch.stack(losses).mean()

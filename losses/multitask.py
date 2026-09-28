@@ -122,7 +122,10 @@ class PLEMMultiTaskLoss(nn.Module):
         if self.cldice_loss is not None:
             terms["cldice"] = self.cldice_loss(masked_logits, target)
         if self.heatmap_loss is not None:
-            terms["heatmap"] = self.heatmap_loss(masked_logits, target)
+            # class_mask also restricts the heatmap's normalizers to point-annotating
+            # samples; logit masking alone zeroes masked samples' contribution but
+            # would still count their pixels in the negative term's denominator.
+            terms["heatmap"] = self.heatmap_loss(masked_logits, target, class_mask)
 
         total = sum(self.weights.get(name, 1.0) * value for name, value in terms.items())
 
