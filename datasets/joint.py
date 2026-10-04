@@ -69,9 +69,14 @@ def load_joint_tiles(
     (row, col) array of road intersections -- empty for Potsdam/SpaceNet6, and
     for a SpaceNet tile cached before intersections existed (one warning is
     printed; run `datasets.spacenet.add_intersections_to_cache` to backfill).
+    `"building_valid"` is an `H x W` uint8 mask of where building labels are
+    known (SpaceNet's public building labels do not cover every road tile --
+    see datasets/spacenet.py), or `None` meaning "known everywhere"
+    (Potsdam/SpaceNet6, and SpaceNet tiles cached before the mask existed,
+    with one warning; `add_building_coverage_to_cache` repairs those).
     """
     no_points = np.zeros((0, 2), dtype=np.float32)
-    n_missing_points = 0
+    n_missing_points = n_missing_valid = 0
     spacenet_dir = Path(spacenet_dir)
     potsdam_dir = Path(potsdam_dir)
     spacenet6_dir = Path(spacenet6_dir)
@@ -96,9 +101,12 @@ def load_joint_tiles(
             else:
                 points = no_points
                 n_missing_points += 1
+            building_valid = d["building_valid"] if "building_valid" in d.files else None
+            n_missing_valid += building_valid is None
             tiles.append({
                 "city": p.parent.name, "tile": p.stem,
                 "image": d["image"], "label": d["label"], "points": points,
+                "building_valid": building_valid,
                 "source": "spacenet", "class_mask": class_mask_for_source("spacenet"),
             })
 
@@ -106,6 +114,11 @@ def load_joint_tiles(
             print(f"load_joint_tiles: {n_missing_points}/{len(sn_paths)} SpaceNet tiles have no "
                   f"cached `points` (road intersections) -- run "
                   f"datasets.spacenet.add_intersections_to_cache() to backfill them.")
+        if n_missing_valid:
+            print(f"load_joint_tiles: {n_missing_valid}/{len(sn_paths)} SpaceNet tiles have no "
+                  f"`building_valid` mask, so areas without public building labels are still "
+                  f"treated as 'no building' -- run "
+                  f"datasets.spacenet.add_building_coverage_to_cache() to repair them.")
 
     if potsdam_dir.is_dir():
         for p in sorted(potsdam_dir.glob("*.npz")):
@@ -115,6 +128,7 @@ def load_joint_tiles(
             tiles.append({
                 "city": None, "tile": p.stem,
                 "image": d["image"], "label": label, "points": no_points,
+                "building_valid": None,
                 "source": "potsdam", "class_mask": class_mask_for_source("potsdam"),
             })
 
@@ -124,6 +138,7 @@ def load_joint_tiles(
             tiles.append({
                 "city": None, "tile": p.stem,
                 "image": d["image"], "label": d["label"], "points": no_points,
+                "building_valid": None,
                 "source": "spacenet6", "class_mask": class_mask_for_source("spacenet6"),
             })
 

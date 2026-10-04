@@ -136,3 +136,57 @@ class TestJointPointPlumbing:
         p = tiles["crop1"]
         assert p["points"].shape == (0, 2)
         assert not (p["label"] == 3).any() and (p["label"] == 2).sum() == 16
+
+
+class TestBuildingCoverage:
+    """datasets/spacenet.py: which building tiles overlap a road tile, and the
+    `building_valid` mask marking where building labels are actually known."""
+
+    # A road tile covering [0, 2] x [0, 2]; four building tiles form its 2x2 block.
+    ROAD = (0.0, 0.0, 2.0, 2.0)
+    INDEX = {
+        1: (0.0, 0.0, 1.0, 1.0), 2: (1.0, 0.0, 2.0, 1.0), 3: (0.0, 1.0, 1.0, 2.0),
+        10: (2.0, 0.0, 3.0, 1.0),   # shares only an edge with the road tile
+        11: (5.0, 5.0, 6.0, 6.0),   # far away
+    }
+
+    def test_overlapping_tiles_exclude_edge_touching_and_distant(self):
+        from datasets.spacenet import overlapping_building_tiles
+        assert overlapping_building_tiles(self.ROAD, self.INDEX) == [1, 2, 3]
+
+    def test_sliver_overlap_is_excluded(self):
+        from datasets.spacenet import overlapping_building_tiles
+        index = {7: (1.995, 0.0, 2.995, 1.0)}  # 0.5% of its area inside the road tile
+        assert overlapping_building_tiles(self.ROAD, index) == []
+
+    def test_building_valid_mask_marks_only_covered_area(self):
+        from datasets.spacenet import building_valid_mask
+        crs = "EPSG:4326"
+        # 0.01 deg per px, origin at lon 0 / lat 2 (north-up): a 200x200 px tile = [0,2]x[0,2].
+        transform = Affine(0.01, 0, 0.0, 0, -0.01, 2.0)
+        covered = [self.INDEX[i] for i in (1, 2, 3)]  # everything but the north-east quarter
+        valid = building_valid_mask((200, 200), crs, transform, covered)
+        assert valid.dtype == np.uint8
+        assert valid[:100, 100:].sum() == 0, "north-east quarter has no building tile -> unknown"
+        assert valid[100:, :].all() and valid[:100, :100].all()
+        assert building_valid_mask((200, 200), crs, transform, []).sum() == 0
+
+    def test_load_joint_tiles_carries_building_valid(self, tmp_path, capsys):
+        img = np.zeros((16, 16, 3), dtype=np.uint8)
+        lab = np.zeros((16, 16), dtype=np.uint8)
+        pts = np.zeros((0, 2), dtype=np.float32)
+        sn = tmp_path / "spacenet" / "Vegas"
+        sn.mkdir(parents=True)
+        valid = np.ones((16, 16), dtype=np.uint8)
+        valid[:, 8:] = 0
+        np.savez_compressed(sn / "Vegas_img1.npz", image=img, label=lab, points=pts, building_valid=valid)
+        np.savez_compressed(sn / "Vegas_img2.npz", image=img, label=lab, points=pts)  # old cache
+        pot = tmp_path / "potsdam"
+        pot.mkdir()
+        np.savez_compressed(pot / "crop1.npz", image=img, label=lab)
+
+        tiles = {t["tile"]: t for t in load_joint_tiles(sn.parent, pot, tmp_path / "none")}
+        np.testing.assert_array_equal(tiles["Vegas_img1"]["building_valid"], valid)
+        assert tiles["Vegas_img2"]["building_valid"] is None
+        assert "add_building_coverage_to_cache" in capsys.readouterr().out
+        assert tiles["crop1"]["building_valid"] is None

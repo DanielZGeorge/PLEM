@@ -565,3 +565,46 @@ class TestIndependentPointHead:
     def test_requires_point_target(self):
         with pytest.raises(ValueError):
             self._make_loss()(self._perfect(), self.SEG_BATCH, self.SPACENET)
+
+
+class TestHeatmapNegativeNormalization:
+    """Regression (run 5): with the negative term averaged per pixel, a head that
+    fires along a whole road pays almost nothing, and the real run predicted 30x too
+    many intersections. CenterNet's normalization (negatives divided by the number of
+    GT peaks) must price that same prediction far higher."""
+
+    def _case(self):
+        gt = torch.zeros((1, 64, 64))
+        gt[0, 32, 32] = 1.0                      # one intersection
+        gt_heatmap = gt_centroids_to_heatmap(gt, sigma=3.0)
+        clean = torch.full((1, 64, 64), 0.01)
+        clean[0, 32, 32] = 0.9
+        along_road = clean.clone()
+        along_road[0, 30:35, :] = 0.5            # moderate confidence along a whole "road"
+        along_road[0, 32, 32] = 0.9              # ...the peak itself is unchanged
+        return gt_heatmap, clean, along_road
+
+    def test_firing_along_a_road_is_expensive_under_positives_norm(self):
+        from losses.heatmap import heatmap_focal_loss
+        gt_heatmap, clean, along_road = self._case()
+        extra = {}
+        for norm in ("pixels", "positives"):
+            extra[norm] = (heatmap_focal_loss(along_road, gt_heatmap, neg_norm=norm)
+                           - heatmap_focal_loss(clean, gt_heatmap, neg_norm=norm)).item()
+        # One GT peak, 64*64 pixels: the two normalizers differ by ~4095x on the same sum.
+        assert extra["positives"] > 20.0, f"CenterNet norm should punish it: {extra['positives']:.4f}"
+        assert extra["positives"] > 1000 * extra["pixels"], (
+            f"positives={extra['positives']:.3f} vs pixels={extra['pixels']:.5f}"
+        )
+
+    def test_clean_prediction_is_cheap_under_both(self):
+        from losses.heatmap import heatmap_focal_loss
+        gt_heatmap, clean, _ = self._case()
+        for norm in ("pixels", "positives"):
+            assert heatmap_focal_loss(clean, gt_heatmap, neg_norm=norm).item() < 0.05
+
+    def test_unknown_norm_raises(self):
+        from losses.heatmap import heatmap_focal_loss
+        gt_heatmap, clean, _ = self._case()
+        with pytest.raises(ValueError):
+            heatmap_focal_loss(clean, gt_heatmap, neg_norm="bogus")

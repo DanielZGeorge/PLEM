@@ -70,6 +70,9 @@ class PLEMMultiTaskLoss(nn.Module):
                        road intersections, which lie on road pixels. Needs a
                        single point class that is the LAST channel.
     point_sigma     : Gaussian sigma (px) of the heatmap target.
+    point_neg_norm  : negative-term normalizer for the sigmoid head, "positives"
+                       (CenterNet's, default) or "pixels" -- see
+                       losses/heatmap.py::heatmap_focal_loss.
     weights         : optional {"ce_dice", "tolerance", "cldice", "heatmap",
                        "point_suppress": float} overriding each term's default
                        weight (1.0, except "point_suppress" which defaults to
@@ -91,6 +94,7 @@ class PLEMMultiTaskLoss(nn.Module):
         dice_eps: float = 1e-6,
         point_head: str = "softmax",
         point_sigma: float = 2.0,
+        point_neg_norm: str = "positives",
     ):
         super().__init__()
         self.linear_classes = list(linear_classes)
@@ -102,6 +106,7 @@ class PLEMMultiTaskLoss(nn.Module):
         if point_head == "sigmoid" and len(self.point_classes) != 1:
             raise ValueError("point_head='sigmoid' needs exactly one point class")
         self.point_head = point_head
+        self.point_neg_norm = point_neg_norm
 
         tolerance_config = {
             c: class_config[c]
@@ -194,6 +199,7 @@ class PLEMMultiTaskLoss(nn.Module):
         # by sample_mask, so their point logit gets exactly zero gradient.
         terms["heatmap"] = self.heatmap_loss.forward_prob(
             torch.sigmoid(logits[:, c].float()), point_target, sample_mask=class_mask[:, c],
+            neg_norm=self.point_neg_norm,
         )
         return terms
 

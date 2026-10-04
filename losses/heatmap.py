@@ -107,6 +107,7 @@ def heatmap_focal_loss(
     beta: float = 4.0,
     eps: float = 1e-6,
     sample_mask: torch.Tensor = None,
+    neg_norm: str = "pixels",
 ) -> torch.Tensor:
     """
     (B, H, W), (B, H, W) -> scalar. Penalty-reduced pixelwise focal loss
@@ -151,6 +152,21 @@ def heatmap_focal_loss(
     signal ~15-20x -- found on the third real train_unet_joint_scaled.ipynb
     run, where the point channel, left almost unsuppressed, flooded ~half of
     all SpaceNet test pixels at inference and stole road/building pixels.
+
+    `neg_norm` picks the negative term's normalizer:
+      - "pixels" (default, described above): a per-pixel mean. Safe when
+        positives are rare and erratic (the old Potsdam point class), but it
+        makes a false positive almost free: a pixel at p=0.3 costs ~0.03 /
+        (millions of pixels), against ~0.6 / (a few dozen peaks) for a
+        half-missed peak. On the fifth real run (road intersections,
+        independent sigmoid head) the head therefore fired along every road:
+        41,097 predicted intersections against 1,389 real ones.
+      - "positives": CenterNet's own normalizer, `neg_loss.sum() / num_pos`.
+        A false-positive pixel is then priced against a missed peak on the
+        same scale, which is what makes the heatmap sharp. Use it when
+        positives are present in essentially every batch (road intersections
+        are) and start the head's bias low (e.g. -4.6, p ~ 0.01) so the
+        initial sum over all pixels is small; pair it with gradient clipping.
     """
     pred = pred_heatmap.clamp(eps, 1 - eps)
     valid = torch.ones_like(gt_heatmap)
@@ -162,9 +178,14 @@ def heatmap_focal_loss(
     pos_loss = -((1 - pred) ** alpha) * torch.log(pred) * pos_mask
     neg_loss = -((1 - gt_heatmap) ** beta) * (pred ** alpha) * torch.log(1 - pred) * neg_mask
 
-    num_pos = pos_mask.sum()
-    num_neg = neg_mask.sum().clamp_min(1.0)
-    return pos_loss.sum() / num_pos.clamp_min(1.0) + neg_loss.sum() / num_neg
+    num_pos = pos_mask.sum().clamp_min(1.0)
+    if neg_norm == "positives":
+        num_neg = num_pos
+    elif neg_norm == "pixels":
+        num_neg = neg_mask.sum().clamp_min(1.0)
+    else:
+        raise ValueError(f"neg_norm must be 'pixels' or 'positives', got {neg_norm!r}")
+    return pos_loss.sum() / num_pos + neg_loss.sum() / num_neg
 
 
 class PointHeatmapLoss(nn.Module):
@@ -203,6 +224,7 @@ class PointHeatmapLoss(nn.Module):
 
     def forward_prob(
         self, prob: torch.Tensor, gt_point_mask: torch.Tensor, sample_mask: torch.Tensor = None,
+        neg_norm: str = "positives",
     ) -> torch.Tensor:
         """
         Same loss for an INDEPENDENT point head: `prob` is a ready `(B, H, W)`
@@ -210,9 +232,11 @@ class PointHeatmapLoss(nn.Module):
         channel competing with the segmentation classes) and `gt_point_mask`
         the `(B, H, W)` binary mask of GT point stamps. `sample_mask` `(B,)`
         marks which samples annotate points at all (see `heatmap_focal_loss`).
+        Defaults to CenterNet's `neg_norm="positives"` (see there for why).
         """
         with torch.no_grad():
             gt_heatmap = gt_centroids_to_heatmap(gt_point_mask.float(), self.sigma)
         return heatmap_focal_loss(
             prob.float(), gt_heatmap, self.alpha, self.beta, sample_mask=sample_mask,
+            neg_norm=neg_norm,
         )
