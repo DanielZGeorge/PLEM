@@ -477,3 +477,91 @@ class TestPLEMMultiTaskLoss:
         stepped = logits.detach() - 0.5 * logits.grad
         assert torch.equal(stepped[:, :3].argmax(1), logits.detach()[:, :3].argmax(1))
         assert torch.softmax(stepped, 1)[:, 3].mean() < torch.softmax(logits.detach(), 1)[:, 3].mean()
+
+
+# ---------------------------------------------------------------------------
+# PLEMMultiTaskLoss, point_head="sigmoid" (independent point head)
+# ---------------------------------------------------------------------------
+
+class TestIndependentPointHead:
+    """Road intersections lie ON road pixels, so the point class is trained as
+    an independent sigmoid head: seg target holds classes 0-2 only, the point
+    target is a separate mask, and neither side's logits enter the other's loss."""
+
+    SEG = combine(ROAD, BUILDING)
+    SEG_BATCH = to_batch(SEG)
+    # One intersection stamp sitting on the road.
+    PT_MASK = torch.zeros((1, *SHAPE))
+    PT_MASK[0, 14:17, 15:18] = 1.0
+    SPACENET = torch.tensor([[1.0, 1.0, 1.0, 1.0]])
+    POTSDAM = torch.tensor([[1.0, 0.0, 1.0, 0.0]])
+
+    def _make_loss(self):
+        return PLEMMultiTaskLoss(
+            class_config={1: {"name": "road", "tolerance": 6}, 2: {"name": "building", "tolerance": 2}},
+            linear_classes=[1], polygon_classes=[2], point_classes=[3], point_head="sigmoid",
+        )
+
+    def _perfect(self):
+        logits = perfect_logits(self.SEG)  # channel 3 is -12 everywhere ("no point")
+        logits[0, 3, 15, 16] = 12.0        # ...except the intersection centre
+        return logits
+
+    def test_perfect_prediction_low_loss(self):
+        out = self._make_loss()(self._perfect(), self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        assert_finite(out["loss"])
+        for key in ("ce_dice", "tolerance", "cldice", "heatmap"):
+            assert key in out
+        assert out["loss"].item() < 0.5, f"got {out['loss'].item():.4f}"
+        assert out["heatmap"] < 0.05, f"got {out['heatmap']:.4f}"
+
+    def test_missed_intersection_is_penalized(self):
+        logits = perfect_logits(self.SEG)  # predicts no point at all
+        out = self._make_loss()(logits, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        assert out["heatmap"] > 1.0, f"got {out['heatmap']:.4f}"
+
+    def test_point_and_segmentation_terms_are_independent(self):
+        loss_fn = self._make_loss()
+        base = loss_fn(self._perfect(), self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+
+        pt_changed = self._perfect()
+        pt_changed[:, 3] += 14.0  # -12 -> +2: confident false points everywhere
+        out = loss_fn(pt_changed, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        for key in ("ce_dice", "tolerance", "cldice"):
+            assert out[key] == pytest.approx(base[key], abs=1e-6), f"{key} moved with the point logit"
+        assert out["heatmap"] > base["heatmap"] + 0.1
+
+        seg_changed = self._perfect()
+        seg_changed[:, :3] = uniform_logits()[:, :3]
+        out = loss_fn(seg_changed, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        assert out["heatmap"] == pytest.approx(base["heatmap"], abs=1e-6), "heatmap moved with seg logits"
+        assert out["ce_dice"] > base["ce_dice"] + 0.1
+
+    def test_non_point_source_gets_zero_point_gradient(self):
+        logits = uniform_logits().clone().requires_grad_(True)
+        target = to_batch(BUILDING)
+        out = self._make_loss()(logits, target, self.POTSDAM, torch.zeros((1, *SHAPE)))
+        out["loss"].backward()
+        assert_finite(logits.grad)
+        assert logits.grad[:, 3].abs().max().item() == 0.0
+        assert logits.grad[:, 1].abs().max().item() < 1e-3, "masked road channel should get ~0 gradient"
+        assert logits.grad[:, 2].abs().max().item() > 1e-6
+
+    def test_gradient_flow_and_decrease(self):
+        loss_fn = self._make_loss()
+        param = torch.nn.Parameter(uniform_logits().clone())
+        opt = torch.optim.Adam([param], lr=0.5)
+        first = loss_fn(param, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        for _ in range(8):
+            opt.zero_grad()
+            out = loss_fn(param, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+            out["loss"].backward()
+            assert_finite(param.grad)
+            opt.step()
+        last = loss_fn(param, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        assert last["loss"].item() < first["loss"].item()
+        assert last["heatmap"] < first["heatmap"]
+
+    def test_requires_point_target(self):
+        with pytest.raises(ValueError):
+            self._make_loss()(self._perfect(), self.SEG_BATCH, self.SPACENET)

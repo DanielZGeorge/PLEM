@@ -56,6 +56,20 @@ class PLEMMultiTaskLoss(nn.Module):
     linear_classes  : e.g. [1] (road) — supervised by ToleranceBandLoss + SoftClDiceLoss.
     polygon_classes : e.g. [2] (building) — supervised by ToleranceBandLoss only.
     point_classes   : e.g. [3] (point) — supervised by PointHeatmapLoss only.
+    point_head      : "softmax" (default) — the point class is one more
+                       softmax channel, competing with the segmentation classes
+                       (the original formulation; `target` contains the point
+                       class id). "sigmoid" — the point channel is an
+                       INDEPENDENT head: the segmentation terms see only the
+                       non-point channels, and the heatmap term sees only
+                       `sigmoid(logits[:, point_class])` against a separate
+                       `point_target` mask. Neither side's logits enter the
+                       other's loss, so points cannot take pixels from
+                       road/building (the run-3 flooding failure) and a point
+                       may coincide with a segmentation class — required for
+                       road intersections, which lie on road pixels. Needs a
+                       single point class that is the LAST channel.
+    point_sigma     : Gaussian sigma (px) of the heatmap target.
     weights         : optional {"ce_dice", "tolerance", "cldice", "heatmap",
                        "point_suppress": float} overriding each term's default
                        weight (1.0, except "point_suppress" which defaults to
@@ -75,12 +89,19 @@ class PLEMMultiTaskLoss(nn.Module):
         point_classes: list,
         weights: dict = None,
         dice_eps: float = 1e-6,
+        point_head: str = "softmax",
+        point_sigma: float = 2.0,
     ):
         super().__init__()
         self.linear_classes = list(linear_classes)
         self.polygon_classes = list(polygon_classes)
         self.point_classes = list(point_classes)
         self.dice_eps = dice_eps
+        if point_head not in ("softmax", "sigmoid"):
+            raise ValueError(f"point_head must be 'softmax' or 'sigmoid', got {point_head!r}")
+        if point_head == "sigmoid" and len(self.point_classes) != 1:
+            raise ValueError("point_head='sigmoid' needs exactly one point class")
+        self.point_head = point_head
 
         tolerance_config = {
             c: class_config[c]
@@ -89,7 +110,9 @@ class PLEMMultiTaskLoss(nn.Module):
         }
         self.tolerance_loss = ToleranceBandLoss(tolerance_config) if tolerance_config else None
         self.cldice_loss = SoftClDiceLoss(self.linear_classes) if self.linear_classes else None
-        self.heatmap_loss = PointHeatmapLoss(self.point_classes) if self.point_classes else None
+        self.heatmap_loss = (
+            PointHeatmapLoss(self.point_classes, sigma=point_sigma) if self.point_classes else None
+        )
 
         self.weights = {"ce_dice": 1.0, "tolerance": 1.0, "cldice": 1.0, "heatmap": 1.0,
                         "point_suppress": 0.0}
@@ -153,7 +176,38 @@ class PLEMMultiTaskLoss(nn.Module):
             return torch.zeros((), device=logits.device)
         return torch.stack(losses).mean()
 
-    def forward(self, logits: torch.Tensor, target: torch.Tensor, class_mask: torch.Tensor) -> dict:
+    def _forward_sigmoid_head(self, logits, target, class_mask, point_target) -> dict:
+        """`point_head="sigmoid"` path — see the class docstring."""
+        c = self.point_classes[0]
+        if c != logits.shape[1] - 1:
+            raise ValueError("point_head='sigmoid' needs the point class to be the last channel")
+        if point_target is None:
+            raise ValueError("point_head='sigmoid' needs a point_target mask")
+        seg_logits = _mask_logits(logits[:, :c], class_mask[:, :c])
+
+        terms = {"ce_dice": self._ce_dice(seg_logits, target)}
+        if self.tolerance_loss is not None:
+            terms["tolerance"] = self.tolerance_loss(seg_logits, target)
+        if self.cldice_loss is not None:
+            terms["cldice"] = self.cldice_loss(seg_logits, target)
+        # No logit masking here: non-annotating samples are excluded outright
+        # by sample_mask, so their point logit gets exactly zero gradient.
+        terms["heatmap"] = self.heatmap_loss.forward_prob(
+            torch.sigmoid(logits[:, c].float()), point_target, sample_mask=class_mask[:, c],
+        )
+        return terms
+
+    def forward(
+        self, logits: torch.Tensor, target: torch.Tensor, class_mask: torch.Tensor,
+        point_target: torch.Tensor = None,
+    ) -> dict:
+        if self.point_head == "sigmoid":
+            terms = self._forward_sigmoid_head(logits, target, class_mask, point_target)
+            total = sum(self.weights.get(name, 1.0) * value for name, value in terms.items())
+            out = {"loss": total}
+            out.update({name: float(value.detach().item()) for name, value in terms.items()})
+            return out
+
         masked_logits = _mask_logits(logits, class_mask)
 
         terms = {"ce_dice": self._ce_dice(masked_logits, target)}

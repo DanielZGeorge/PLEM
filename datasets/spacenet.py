@@ -31,6 +31,7 @@ from datasets.common import (
     rasterize_lines,
     read_image_rgb,
 )
+from datasets.intersections import road_intersections, intersections_to_pixels
 
 BASE_URL = "https://spacenet-dataset.s3.amazonaws.com"
 AOI_INDEX = {"Vegas": 2, "Paris": 3, "Shanghai": 4, "Khartoum": 5}
@@ -310,12 +311,64 @@ def build_spacenet_sample(
             # once reprojected. The rasterized pixel count is the real test.
             continue
         image = read_image_rgb(tif_dest)
+        points = tile_intersections(road_geoms, geom_info)
 
         cache_path = cache_dir / f"{city}_img{rid}.npz"
-        np.savez_compressed(cache_path, image=image, label=label)
+        np.savez_compressed(cache_path, image=image, label=label, points=points)
         samples.append({
             "tile_id": rid, "city": city, "path": str(cache_path),
-            "image": image, "label": label,
+            "image": image, "label": label, "points": points,
         })
 
     return samples
+
+
+def tile_intersections(road_geoms: list, geom_info: dict, merge_px: float = 20.0) -> np.ndarray:
+    """`(N, 2)` float32 (row, col) road-intersection points for one SN3 road
+    tile -- PLEM's point feature (see `datasets/intersections.py`)."""
+    return intersections_to_pixels(
+        road_intersections(road_geoms), geom_info["crs"], geom_info["transform"],
+        geom_info["shape"], merge_px=merge_px,
+    )
+
+
+def add_intersections_to_cache(cache_dir="data/spacenet", overwrite: bool = False) -> dict:
+    """
+    Backfill the `points` array into SpaceNet `.npz` tiles cached before
+    intersections existed, without rebuilding the sample: each tile's raw
+    road geojson + tif are already under `<cache_dir>/<city>/raw/` (and
+    `download_file` re-fetches either one if it is missing). Tiles that
+    already carry `points` are skipped unless `overwrite`.
+
+    Returns `{"updated", "skipped", "failed", "n_points"}` counts.
+    """
+    cache_dir = Path(cache_dir)
+    stats = {"updated": 0, "skipped": 0, "failed": 0, "n_points": 0}
+    for npz_path in sorted(cache_dir.rglob("*.npz")):
+        m = re.fullmatch(r"(\w+)_img(\d+)", npz_path.stem)
+        if m is None or m.group(1) not in AOI_INDEX:
+            continue
+        city, rid = m.group(1), int(m.group(2))
+        with np.load(npz_path) as d:
+            arrays = {k: d[k] for k in d.files}
+        if "points" in arrays and not overwrite:
+            stats["skipped"] += 1
+            stats["n_points"] += len(arrays["points"])
+            continue
+        raw_dir = npz_path.parent / "raw"
+        tif_dest = raw_dir / "roads_tif" / f"img{rid}.tif"
+        geojson_dest = raw_dir / "roads_geojson" / f"img{rid}.geojson"
+        try:
+            aoi = AOI_INDEX[city]
+            download_file(_road_tif_url(city, aoi, rid), tif_dest)
+            download_file(_road_geojson_url(city, aoi, rid), geojson_dest)
+            points = tile_intersections(load_geojson_features(geojson_dest), get_tile_geometry(tif_dest))
+        except (requests.RequestException, rasterio.errors.RasterioError, ValueError, KeyError) as e:
+            print(f"add_intersections_to_cache: {npz_path.name} failed ({type(e).__name__}: {e})")
+            stats["failed"] += 1
+            continue
+        arrays["points"] = points
+        np.savez_compressed(npz_path, **arrays)
+        stats["updated"] += 1
+        stats["n_points"] += len(points)
+    return stats

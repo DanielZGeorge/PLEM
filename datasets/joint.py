@@ -1,16 +1,18 @@
 """
 Joint SpaceNet + Potsdam + SpaceNet6 training-source glue.
 
-None of the three sources alone supplies all three PLEM feature types:
-SpaceNet (datasets/spacenet.py) has road+building but no point class (no
-point-object class exists at SpaceNet's ~0.3-0.5m/px GSD); Potsdam
-(datasets/potsdam.py, with `extract_buildings=True`) has building+point but
-no road/linear class at all (its 6-class palette has no road color);
+Each sample is supervised only on the classes its *source* annotates.
+SpaceNet (datasets/spacenet.py) has road + building, plus the point feature:
+road intersections derived from its own vector road labels
+(datasets/intersections.py), stored as a separate per-tile `points` layer
+because an intersection lies on a road pixel. Potsdam (datasets/potsdam.py,
+with `extract_buildings=True`) is used for buildings only -- it has no road
+class, and its tree/car "point" labels (class 3 in its cached label maps) are
+dropped at load time: they were the previous point feature and proved
+unlearnable (30-60 px blobs at 6 cm/px, unlabelled on the other sources).
 SpaceNet6 (datasets/spacenet6.py, real SAR imagery -- the illumination-
 invariant half of PLEM's night/dark-image robustness approach) has building
-only, no road or point annotations. A genuinely joint 0D/1D/2D training run
-needs to combine all three, with each sample supervised only on the classes
-its *source* actually annotates -- this module is the single source of truth
+only -- this module is the single source of truth
 for that mapping, used both by the joint tile loader here and by
 losses/multitask.py::PLEMMultiTaskLoss's caller (the `class_mask` argument).
 
@@ -23,8 +25,8 @@ from pathlib import Path
 import numpy as np
 
 SOURCE_CLASSES = {
-    "spacenet":  [1, 2],  # road, building -- no point annotations exist
-    "potsdam":   [2, 3],  # building, point -- no road annotations exist
+    "spacenet":  [1, 2, 3],  # road, building, point (road intersections)
+    "potsdam":   [2],        # building only -- no roads; tree/car points dropped
     "spacenet6": [2],     # building only -- SAR source has no road/point annotations
 }
 
@@ -61,9 +63,15 @@ def load_joint_tiles(
     this can be called before any cache exists without special-casing the
     caller.
 
-    Returns a list of dicts: `{"tile", "image", "label", "source",
+    Returns a list of dicts: `{"tile", "image", "label", "points", "source",
     "class_mask"}` (plus `"city"` for SpaceNet tiles, `None` otherwise).
+    `"label"` holds classes 0-2 only. `"points"` is an `(N, 2)` float32
+    (row, col) array of road intersections -- empty for Potsdam/SpaceNet6, and
+    for a SpaceNet tile cached before intersections existed (one warning is
+    printed; run `datasets.spacenet.add_intersections_to_cache` to backfill).
     """
+    no_points = np.zeros((0, 2), dtype=np.float32)
+    n_missing_points = 0
     spacenet_dir = Path(spacenet_dir)
     potsdam_dir = Path(potsdam_dir)
     spacenet6_dir = Path(spacenet6_dir)
@@ -83,18 +91,30 @@ def load_joint_tiles(
             sn_paths = sorted(spacenet_dir.rglob("*.npz"))
         for p in sn_paths:
             d = np.load(p)
+            if "points" in d.files:
+                points = d["points"].astype(np.float32).reshape(-1, 2)
+            else:
+                points = no_points
+                n_missing_points += 1
             tiles.append({
                 "city": p.parent.name, "tile": p.stem,
-                "image": d["image"], "label": d["label"],
+                "image": d["image"], "label": d["label"], "points": points,
                 "source": "spacenet", "class_mask": class_mask_for_source("spacenet"),
             })
+
+        if n_missing_points:
+            print(f"load_joint_tiles: {n_missing_points}/{len(sn_paths)} SpaceNet tiles have no "
+                  f"cached `points` (road intersections) -- run "
+                  f"datasets.spacenet.add_intersections_to_cache() to backfill them.")
 
     if potsdam_dir.is_dir():
         for p in sorted(potsdam_dir.glob("*.npz")):
             d = np.load(p)
+            label = d["label"].copy()
+            label[label == 3] = 0  # drop the old tree/car point class (see module docstring)
             tiles.append({
                 "city": None, "tile": p.stem,
-                "image": d["image"], "label": d["label"],
+                "image": d["image"], "label": label, "points": no_points,
                 "source": "potsdam", "class_mask": class_mask_for_source("potsdam"),
             })
 
@@ -103,7 +123,7 @@ def load_joint_tiles(
             d = np.load(p)
             tiles.append({
                 "city": None, "tile": p.stem,
-                "image": d["image"], "label": d["label"],
+                "image": d["image"], "label": d["label"], "points": no_points,
                 "source": "spacenet6", "class_mask": class_mask_for_source("spacenet6"),
             })
 

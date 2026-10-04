@@ -200,3 +200,19 @@ class PointHeatmapLoss(nn.Module):
                 probs[:, c], gt_heatmap, self.alpha, self.beta, sample_mask=sample_mask,
             ))
         return torch.stack(losses).mean()
+
+    def forward_prob(
+        self, prob: torch.Tensor, gt_point_mask: torch.Tensor, sample_mask: torch.Tensor = None,
+    ) -> torch.Tensor:
+        """
+        Same loss for an INDEPENDENT point head: `prob` is a ready `(B, H, W)`
+        probability map (e.g. a sigmoid of the head's own logit, not a softmax
+        channel competing with the segmentation classes) and `gt_point_mask`
+        the `(B, H, W)` binary mask of GT point stamps. `sample_mask` `(B,)`
+        marks which samples annotate points at all (see `heatmap_focal_loss`).
+        """
+        with torch.no_grad():
+            gt_heatmap = gt_centroids_to_heatmap(gt_point_mask.float(), self.sigma)
+        return heatmap_focal_loss(
+            prob.float(), gt_heatmap, self.alpha, self.beta, sample_mask=sample_mask,
+        )
