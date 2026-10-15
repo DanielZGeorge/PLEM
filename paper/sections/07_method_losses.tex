@@ -53,8 +53,8 @@ make it differentiable.
     Point F1 (\S\ref{subsec:pointf1}) & \texttt{PointHeatmapLoss} (\S\ref{subsec:heatmap-loss}) &
       \textbf{Not a relaxation.} Hungarian assignment and connected-component labeling have no
       useful gradient path. Reformulated entirely as CenterNet-style dense Gaussian-heatmap
-      regression --- a genuinely different formulation, not a softened version of the eval
-      metric's algorithm. \\
+      regression on an independent sigmoid output channel --- a genuinely different formulation,
+      not a softened version of the eval metric's algorithm. \\
     APLS / DTAF1-Topo (\S\ref{subsec:apls}/\S\ref{subsec:dtaf1topo}) & \emph{(none)} & No
       tractable lightweight differentiable relaxation of graph shortest-path recomputation
       exists; stays eval-only permanently --- a stated design decision
@@ -154,21 +154,46 @@ different from plain Dice, not just numerically saturating
 Per Table~\ref{tab:correspondence}, this term is \textbf{not} a relaxation of
 Section~\ref{subsec:pointf1}'s Hungarian matching --- connected-component labeling and
 combinatorial assignment have no useful gradient. Instead, point supervision is reformulated
-entirely as dense Gaussian-heatmap regression, CenterNet-style: each GT point instance's centroid
-(extracted via the exact same \texttt{scipy.ndimage.label} + \texttt{center\_of\_mass} pipeline
-\texttt{point\_f1.py}'s \texttt{\_instance\_centroids} already uses at eval time --- here purely
-for \emph{target} construction, under \texttt{no\_grad}) is burned into a Gaussian blob on a
-target heatmap (overlapping Gaussians combined via elementwise max, avoiding peak inflation where
-GT points cluster), and the point class's own softmax probability channel is trained directly
-against it with a penalty-reduced pixelwise focal loss (CornerNet/CenterNet formulation):
+entirely as dense Gaussian-heatmap regression, CenterNet-style \cite{zhou2019centernet}: each GT
+point instance's centroid (extracted via the exact same \texttt{scipy.ndimage.label} +
+\texttt{center\_of\_mass} pipeline \texttt{point\_f1.py}'s \texttt{\_instance\_centroids} already
+uses at eval time --- here purely for \emph{target} construction, under \texttt{no\_grad}) is
+burned into a Gaussian blob on a target heatmap (overlapping Gaussians combined via elementwise
+max), and the nearest integer pixel of every centroid is stamped to exactly $1.0$ so the positive
+term below always fires (a sub-pixel centroid otherwise peaks below $1.0$ and receives no positive
+supervision at all --- the first scaled run's failure, Section~\ref{subsec:scaled-results}). The
+point probability $p$ is trained against it with a penalty-reduced pixelwise focal loss
+(CornerNet/CenterNet formulation \cite{law2018cornernet,zhou2019centernet}):
 \begin{align}
-  \mathrm{gt\_heatmap}(x) &= \max_{c \in \mathrm{centroids}} \exp\left(-\frac{\|x-c\|^2}{2\sigma^2}\right) \\
+  \mathrm{gt\_heatmap}(x) &= \max_{c \in \mathrm{centroids}} \exp\left(-\frac{\|x-c\|^2}{2\sigma^2}\right),
+    \quad \text{stamped to 1 at } \mathrm{round}(c) \\
   \mathrm{pos\_loss}(x) &= -(1-p(x))^\alpha \log p(x) \quad \text{if } \mathrm{gt\_heatmap}(x) = 1 \\
   \mathrm{neg\_loss}(x) &= -(1-\mathrm{gt\_heatmap}(x))^\beta p(x)^\alpha \log(1-p(x)) \quad
     \text{otherwise} \\
-  \mathrm{loss} &= \frac{\sum_x \mathrm{pos\_loss}(x) + \sum_x \mathrm{neg\_loss}(x)}
-                        {\max(1, \mathrm{num\_positive\_pixels})}
+  \mathrm{loss} &= \frac{\sum_x \mathrm{pos\_loss}(x)}{N_{\mathrm{pos}}}
+                 + \frac{\sum_x \mathrm{neg\_loss}(x)}{Z_{\mathrm{neg}}}
 \end{align}
+with $N_{\mathrm{pos}} = \max(1, \#\text{peak pixels in the batch})$, counted only over samples
+whose source annotates points. The negative normalizer $Z_{\mathrm{neg}}$ is a deliberate choice
+with large practical consequences (Section~\ref{subsec:scaled-results}):
+$Z_{\mathrm{neg}} = N_{\mathrm{pos}}$ is CenterNet's own normalizer, which prices a false-positive
+pixel on the same scale as a missed peak; $Z_{\mathrm{neg}} = \#\text{negative pixels}$ (a
+per-pixel mean) makes false positives almost free. CenterNet applies its normalizer on a stride-4
+output; at PLEM's full resolution there are ${\sim}100{,}000$ background pixels per road
+intersection, roughly $40\times$ CenterNet's design ratio, so neither choice is safe by default ---
+the real runs over-detected $30\times$ with the per-pixel mean and almost never fired with
+$N_{\mathrm{pos}}$ at a fixed threshold, and the decoding threshold must be calibrated on
+validation tiles either way.
+
+\textbf{Independent point head.} The point probability is
+$p = \mathrm{sigmoid}(\mathrm{logits}[:, \mathrm{point}])$, an output channel outside the
+road/building/background softmax. Neither the segmentation terms nor the point term ever sees the
+other's logits, so point predictions cannot take pixels from roads or buildings --- which a point
+channel inside the softmax did, flooding half of all SpaceNet test pixels
+(Section~\ref{subsec:scaled-results}) --- and a point may coincide with a road pixel, as every road
+intersection does. At inference, points are decoded as local maxima of $p$ (non-maximum
+suppression over the whole stitched tile) above a threshold chosen by validation F1.
+
 \texttt{point\_f1.py}'s Hungarian matching is untouched and remains a pure eval-time metric ---
 this is a genuine, documented train/eval formulation mismatch (Section~\ref{sec:discussion}), not
 papered over as a relaxation.
@@ -184,12 +209,13 @@ weighted:
       w_{\mathrm{cldice}} L_{\mathrm{cldice}} + w_{\mathrm{heatmap}} L_{\mathrm{heatmap}}
 \end{align}
 
-\textbf{Multi-source class masking.} SpaceNet tiles annotate road+building only (no point class
-exists at SpaceNet's GSD, Section~\ref{subsec:realdata-setup}); Potsdam tiles annotate
-building+point only (no road class in Potsdam's palette). Training one 4-class model on both
-jointly requires each sample to be supervised only on the classes its \emph{source} actually
-annotates. This is implemented by additively biasing a sample's masked-out class channels to a
-large negative logit \textbf{before} any softmax is taken:
+\textbf{Multi-source class masking.} In the final pipeline SpaceNet tiles annotate road,
+building and road intersections, while Potsdam and SpaceNet6 tiles annotate buildings only (in
+Section~\ref{subsec:joint-setup}'s earlier run, Potsdam annotated building+point). Training one
+model on all sources jointly requires each sample to be supervised only on the classes its
+\emph{source} actually annotates. For the softmax classes this is implemented by additively
+biasing a sample's masked-out class channels to a large negative logit \textbf{before} any
+softmax is taken:
 \begin{align}
   \mathrm{logits}'[:,c] = \mathrm{logits}[:,c] + (1 - \mathrm{class\_mask}[:,c]) \cdot (-10^4)
 \end{align}
@@ -199,7 +225,13 @@ contribution to \emph{every} term at once --- vanish identically. This is a sing
 shared by all four loss terms, rather than four bespoke masking implementations, and relies on
 target label maps never containing a class id a sample's source doesn't annotate (true by
 construction for both \texttt{datasets/spacenet.py} and \texttt{datasets/potsdam.py}'s
-rasterizers, Sections~\ref{subsec:realdata-setup},~\ref{subsec:joint-setup}).
+rasterizers, Sections~\ref{subsec:realdata-setup},~\ref{subsec:joint-setup}). The same
+mechanism handles \textbf{unlabelled areas within a source}: a SpaceNet training patch that
+touches any area without public building labels (Section~\ref{subsec:scaled-setup}) gets building
+masked out for that patch, and any building pixels in it relabelled background, so unlabelled
+buildings are never taught as ``not a building''. The independent point head
+(Section~\ref{subsec:heatmap-loss}) is excluded per sample instead --- a sample whose source has no
+point labels contributes nothing to the point term --- since it has no softmax to mask.
 \texttt{PLEMMultiTaskLoss.forward()} returns a dict (\texttt{"loss"} plus each active sub-term as
 a detached float) --- mirroring Section~\ref{sec:evalprotocol}'s ``always return a dict of named
 scalars'' convention on the training side too, so per-epoch logging code looks structurally

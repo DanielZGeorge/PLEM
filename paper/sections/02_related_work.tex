@@ -50,8 +50,12 @@ sharply).
 
 \subsection{Point/instance detection metrics}
 COCO-style average precision \cite{lin2014coco}, and the optimal bipartite-matching literature
-underlying \texttt{point\_f1}'s Hungarian assignment. Citation target: Kuhn, 1955 (the Hungarian
-algorithm) \cite{kuhn1955hungarian}.
+underlying \texttt{point\_f1}'s Hungarian assignment \cite{kuhn1955hungarian}. Road
+intersections, PLEM's point feature, are the vertices of the road graph that graph-based road
+extraction predicts explicitly --- iterative graph construction (RoadTracer
+\cite{bastani2018roadtracer}) and graph-tensor encoding (Sat2Graph \cite{he2020sat2graph}). PLEM
+instead predicts them as a separate point output next to a raster road mask, and scores them as
+instances.
 
 \subsection{Composite/multi-task segmentation evaluation}
 Positions the gap PLEM's \emph{evaluation} half fills: existing work evaluates linear and

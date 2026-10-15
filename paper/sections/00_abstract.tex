@@ -11,17 +11,19 @@ non-collapsing) and DTAF1-Topo (a raster-skeleton APLS connectivity term closing
 road-breakage blind spot). Building on this evaluation vocabulary, we then ask a training
 question: can a single model learn to predict point (0D), linear (1D), and polygonal (2D) map
 features \emph{jointly}, using a loss shaped by the same tolerance/topology/instance-matching
-considerations that motivate these metrics, rather than a geometry-agnostic per-pixel loss? We
-introduce \texttt{PLEMMultiTaskLoss}, a differentiable multi-task training loss combining three
-geometry-aware terms --- a soft tolerance-band term (DTAF1 analog), a soft-clDice term (Shit
-et~al.'s soft-skeletonization), and a CenterNet-style Gaussian-heatmap term standing in for
-Hungarian-matched point F1, which has no tractable differentiable relaxation --- plus a masked
-multi-source training scheme letting heterogeneous single-modality datasets (SpaceNet:
-road+building; Potsdam: building+point) jointly supervise one 4-class model. We validate the loss
-with 20 unit tests, synthetic per-term ablation sweeps confirming each term encodes the geometric
-sensitivity it claims to, and a small real joint-training pipeline sanity check across 153 real
-tiles, confirming all four loss terms learn jointly and that point-feature evaluation flows
-end-to-end through the metric library on a real trained model's output.
+considerations that motivate these metrics? We introduce \texttt{PLEMMultiTaskLoss}, combining a
+soft tolerance-band term (DTAF1 analog), a soft-clDice term, and a CenterNet-style
+Gaussian-heatmap term for points, plus a masked multi-source scheme letting datasets that each
+annotate only some feature types (SpaceNet: road, building and road intersections; ISPRS Potsdam
+and SpaceNet6 SAR: buildings) jointly supervise one model. Points are \emph{road intersections},
+derived from the same vector road labels as the road class and predicted by an independent
+sigmoid head. Across a 1,033-tile, three-source production run, the final model reaches
+\texttt{cbhm\_soft} 0.685 on SpaceNet test tiles and road-intersection F1 0.279 at a
+validation-calibrated threshold. The path there is itself a finding: a point channel inside the
+segmentation softmax flooded predictions, an earlier tree/car point class proved unlearnable, the
+heatmap loss's negative-term normalization flipped the detector between $30\times$
+over-detection and almost none, and 36\% of SpaceNet's road-tile area turned out to have no
+public building labels at all.
 \end{abstract}
 
 \begin{CCSXML}

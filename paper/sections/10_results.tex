@@ -231,3 +231,104 @@ model at this epoch budget, not a structural failure of the joint loss or maskin
 qualitative evidence of a masking bug (e.g.\ a SpaceNet tile hallucinating point-class
 predictions, which would indicate \texttt{class\_mask} leaking) was observed in any reviewed
 panel.
+
+\subsection{Scaled Production Training Results}
+\label{subsec:scaled-results}
+
+\textbf{Final model} (run 6, best checkpoint at epoch 38 of 40, validation-calibrated point
+threshold). The loss components all decline over the full 40 epochs (train: \texttt{ce\_dice}
+$1.074 \to 0.740$, \texttt{tolerance} $0.408 \to 0.278$, \texttt{cldice} $0.733 \to 0.560$,
+\texttt{heatmap} $4.494 \to 3.511$; validation selection loss $6.017 \to$ best $4.349$).
+
+\begin{table*}
+  \caption{Production model, test-set means per source; each tile scored only on the classes its
+  source annotates. On Potsdam and SpaceNet6 (no linear class) \texttt{cbhm\_soft} reduces to the
+  building score and \texttt{dtaf1\_topo} equals \texttt{dtaf1}.}
+  \label{tab:scaled-test}
+  \begin{tabular}{@{}lcccccc@{}}
+    \toprule
+    Source (tiles) & cbhm\_soft & cbhm & dtaf1\_topo & dtaf1 & bf & cldice \\
+    \midrule
+    SpaceNet (83) & \textbf{0.685} & 0.645 & 0.482 & 0.771 & 0.741 & 0.602 \\
+    Potsdam (30) & 0.568 & 0.568 & 0.559 & 0.559 & 0.568 & --- \\
+    SpaceNet6 (43) & 0.350 & 0.350 & 0.300 & 0.300 & 0.350 & --- \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\texttt{dtaf1\_topo} reads well below \texttt{dtaf1} on SpaceNet (0.482 vs.\ 0.771,
+Table~\ref{tab:scaled-test}): this is its first real-data use, and the gap is the raster-skeleton
+APLS term penalizing road fragmentation that plain DTAF1 cannot see --- the
+Section~\ref{subsec:blindspot} blind spot, now observed on a trained model's output.
+
+\textbf{Road intersections} (SpaceNet test tiles; 82 of 83 contain at least one): 547 predicted
+against 1,389 real, 270 matched within 3\,m --- \textbf{micro precision 0.494, recall 0.194, F1
+0.279} (mean per-tile F1 0.213). The validation tiles chose a threshold of 0.1 (validation micro
+F1 0.280); 0.07 was almost tied (0.278) with a predicted-per-real ratio of 1.19 instead of 0.38.
+Two diagnostics bound what calibration alone can achieve. \emph{Separability}: the head's
+probability at real intersections has median 0.046 (10th--90th percentile 0.016--0.120), against
+median 0.013 (90th percentile 0.029, 99th 0.052) on road pixels more than 30\,px from any
+intersection --- the head ranks junctions above plain road, but the distributions overlap.
+\emph{Recall ceiling}: even at a threshold of 0.002, only 62\% of validation intersections have any
+peak within 10\,px; a third of junctions are invisible to the head at any threshold.
+
+\begin{table}
+  \caption{Train/predict asymmetry: predicted pixels per class on the test tiles. Inference takes
+  no source or class-mask argument, so every output is produced on every source.}
+  \label{tab:scaled-asymmetry}
+  \small
+  \begin{tabular}{@{}lrrr@{}}
+    \toprule
+    Source & Road px & Building px & Intersection px (inst.) \\
+    \midrule
+    Potsdam & 12,743 & 835,743 & 0 (0) \\
+    SpaceNet & 10,660,448 & 18,622,699 & 13,655 (547) \\
+    SpaceNet6 & 543,764 & 521,035 & 0 (0) \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The intersection head predicts only on optical road imagery
+(Table~\ref{tab:scaled-asymmetry}). SpaceNet6 is the exception for roads: 544K road pixels on SAR
+tiles, mostly along rows of buildings, which is where SpaceNet6's building score is lost ---
+SpaceNet6 never supervises the road class, so nothing in training says those are not roads.
+
+\textbf{Darkness.} Re-scoring the same test tiles at simulated low-light severities
+0.0/0.3/0.6/0.9: SpaceNet \texttt{cbhm\_soft} 0.685/0.592/0.561/0.434, Potsdam
+0.568/0.543/0.528/0.481, SpaceNet6 0.350/0.330/0.331/0.328 (radar, unaffected by design), and
+road-intersection F1 0.279/0.209/0.193/0.071. Points degrade faster than buildings or roads.
+
+\textbf{Development record.} The final configuration is the sixth full 40-epoch run of this
+pipeline. Each earlier run failed in one specific, diagnosable way
+(Table~\ref{tab:scaled-history}); we report them because each failure mode is general to
+multi-task, multi-source training with a point head, and each fix is now covered by a regression
+test. Consecutive runs changed more than one setting, so the table is a development record, not an
+ablation.
+
+\begin{table*}
+  \caption{Development record of the production pipeline. $^\dagger$Run 1's evaluation outputs were
+  not preserved in the notebook; values are from the run's recorded summary. $^\ddagger$Run 6's
+  building scores use the repaired, coverage-masked building ground truth and are not directly
+  comparable with runs 1--5.}
+  \label{tab:scaled-history}
+  \small
+  \begin{tabular}{@{}c p{0.19\textwidth} c p{0.17\textwidth} p{0.31\textwidth}@{}}
+    \toprule
+    Run & Point feature / head & cbhm (Potsdam / SpaceNet / SN6) & Point outcome & Root cause $\to$ fix \\
+    \midrule
+    1 & Potsdam trees/cars, softmax & 0.59 / 0.47 / 0.40$^\dagger$ & 0 predicted &
+      sub-pixel target never reaches 1.0 $\to$ stamp peak pixel \\
+    2 & same & not evaluated & 0 predicted; buildings 0\,px &
+      negatives $\div$ tiny peak count $\to$ per-pixel mean, clipping \\
+    3 & same & 0.29 / 0.28 / 0.20 & flooded ${\sim}$half of SpaceNet &
+      unsupervised channel wins argmax $\to$ separate decoding \\
+    4 & same & 0.55 / 0.34 / 0.29 & F1 0.028, ${\sim}33\times$ over &
+      unlearnable label $\to$ road intersections \\
+    5 & intersections, sigmoid head & 0.59 / 0.47 / 0.41 & F1 0.025, $30\times$ over &
+      false positives nearly free $\to$ CenterNet normalizer \\
+    6 & same & 0.57 / \textbf{0.645} / 0.35$^\ddagger$ & \textbf{F1 0.279} (calibrated) &
+      normalizer overshoots $\to$ validation-calibrated threshold \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+

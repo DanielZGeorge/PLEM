@@ -106,7 +106,8 @@ Section~\ref{sec:discussion}) number of connected components in that sample --- 
 point-feature data keeps $k' \ll N$, but this is the one \texttt{losses/} term whose cost scales
 with instance \emph{count} rather than purely with image size, unlike
 Sections~\ref{app:b8}--\ref{app:b10}. \texttt{heatmap\_focal\_loss} itself is $O(BN)$, a constant
-number of pointwise tensor operations.
+number of pointwise tensor operations, identical for either negative normalizer and for the
+sigmoid point head (Section~\ref{subsec:heatmap-loss}).
 
 \subsection{\texttt{PLEMMultiTaskLoss}}
 \label{app:b12}

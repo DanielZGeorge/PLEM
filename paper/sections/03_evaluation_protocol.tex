@@ -99,8 +99,9 @@ piece of machinery between any two \texttt{losses/} terms.
 \subsection{Point F1 --- Hungarian Instance Matching}
 \label{subsec:pointf1}
 
-For the optional point class (trees, lamp posts, manhole covers): connected-component blobs are
-reduced to centroids (\texttt{scipy.ndimage.label} + \texttt{center\_of\_mass}), then matched via
+For the optional point class --- road intersections in the trained-model pipeline
+(Section~\ref{subsec:scaled-setup}); earlier, Potsdam trees (Section~\ref{subsec:realdata-setup})
+--- connected-component blobs are reduced to centroids (\texttt{scipy.ndimage.label} + \texttt{center\_of\_mass}), then matched via
 tolerance-restricted Hungarian assignment (\texttt{scipy.optimize.linear\_sum\_assignment}), not
 greedy nearest-neighbor.
 
@@ -125,8 +126,10 @@ Section~\ref{sec:discussion}.
 \subsection{APLS --- Raster-Skeleton Average Path Length Similarity}
 \label{subsec:apls}
 
-No vector road graph survives anywhere in this pipeline --- \texttt{datasets/common.py::rasterize\_lines}
-collapses roads straight to a flat pixel mask, discarding segment/graph structure --- so APLS is
+No vector road graph survives into evaluation --- \texttt{datasets/common.py::rasterize\_lines}
+collapses roads straight to a flat pixel mask, discarding segment/graph structure (the vector
+labels are read once at dataset-build time, only to derive intersection points,
+Section~\ref{subsec:scaled-setup}) --- so APLS is
 approximated entirely from raster skeletons (\texttt{metrics/apls.py}): skeletonize pred/GT masks,
 build an 8-connected pixel-adjacency graph (\texttt{networkx}; edge weight = Euclidean pixel
 distance), then for sampled GT control-point pairs $(u,v)$ within one GT connected component,

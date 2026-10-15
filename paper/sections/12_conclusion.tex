@@ -2,57 +2,60 @@
 \label{sec:conclusion}
 
 This paper makes two contributions that reinforce each other. The evaluation half
-(Sections~\ref{sec:evalprotocol}--\ref{sec:topological}) is a class-agnostic, tolerance/topology-aware
-metric library that found and fixed two real failure modes through an explicit
-synthetic-sweep $\to$ real-data validation $\to$ targeted additive fix $\to$ regression-test loop.
-The training half (Section~\ref{sec:method}) asks whether the same geometric properties that
-motivate those metrics can be trained \emph{into} a model directly, rather than only measured
-afterward: \texttt{PLEMMultiTaskLoss} combines three differentiable analogs of those metrics
-(tolerance, topology, and --- via a genuine reformulation rather than a relaxation ---
-point-instance localization) into one multi-task loss, with a masked multi-source training scheme
-letting datasets that individually annotate only two of three feature types jointly supervise one
-4-class model. Section~\ref{subsec:lossablation-results}'s synthetic ablations confirm each term
-encodes the geometric sensitivity it was designed to; Section~\ref{subsec:joint-results}'s small
-real joint-training run across 153 real tiles confirms the mechanism holds together end-to-end on
-real, messy imagery --- all four loss terms learn jointly, per-source masking behaves correctly,
-and point-feature evaluation flows all the way through the metric library on a real trained
-model's output for the first time --- the same posture Section~\ref{subsec:trainedmodel-setup}'s
-original CE+Dice U-Net took toward the evaluation metrics themselves. Whether the new loss
-\emph{improves on} CE+Dice, as opposed to merely working correctly, remains open pending an
-epoch-matched comparison (below).
+(Sections~\ref{sec:evalprotocol}--\ref{sec:topological}) is a class-agnostic,
+tolerance/topology-aware metric library that found and fixed two real failure modes through an
+explicit synthetic-sweep $\to$ real-data validation $\to$ targeted additive fix $\to$
+regression-test loop. The training half (Section~\ref{sec:method}) asks whether the same geometric
+properties can be trained \emph{into} a model directly, rather than only measured afterward.
+\texttt{PLEMMultiTaskLoss} combines three differentiable analogs of those metrics (tolerance,
+topology, and --- via a genuine reformulation rather than a relaxation --- point-instance
+localization) into one multi-task loss, with a masked multi-source training scheme letting datasets
+that individually annotate only some of the three feature types jointly supervise one model.
+Section~\ref{subsec:lossablation-results}'s synthetic ablations confirm each term encodes the
+geometric sensitivity it was designed to. Section~\ref{subsec:joint-results}'s small real run shows
+all four terms learning jointly and turns up a real-data example of why CBHM's harsh composite and
+DTAF1's lenient one are both needed. Section~\ref{subsec:scaled-results} carries the mechanism to a
+1,033-tile, three-source production pipeline: its final model reaches SpaceNet
+\texttt{cbhm\_soft} 0.685 and detects road intersections --- the point feature, derived from the
+same vector labels as the roads --- at F1 0.279. Its six-run development record is as much a result
+as the final numbers: a point channel inside the segmentation softmax floods it, a point label that
+exists on one source only and spans tens of pixels is unlearnable, the heatmap loss's negative
+normalization has no safe default at full resolution, and a widely used public dataset leaves a
+third of its road-tile area without building labels. Each was caught by measuring rather than
+assuming --- per-term loss logs, per-source predicted-pixel counts, point scores restricted to tiles
+that actually contain points, and qualitative panels --- and most of those checks are built on
+Sections~\ref{sec:evalprotocol}--\ref{sec:topological}'s protocol.
 
-Future work:
+The highest-priority next steps:
 \begin{itemize}
-  \item Run an epoch-matched (or otherwise fairly controlled) comparison between the CE+Dice
-    baseline and the new joint loss (highest priority ---
-    Section~\ref{subsec:joint-results}'s 2-epoch run cannot separate ``the new loss is worse''
-    from ``2 epochs on a harder task is worse,'' and every other item below benefits from having
-    that real comparison to react to).
-  \item Wire \texttt{dtaf1\_topo} into \texttt{evaluate\_all()} and \texttt{metrics/\_\_init\_\_.py}
-    after real-data validation (Section~\ref{subsec:realdata-results}'s Finding \#1,
-    Section~\ref{sec:discussion}).
-  \item Re-run \texttt{dtaf1\_topo}/\texttt{apls} on the real 24-tile SpaceNet sample already used
-    for every other real-data finding, closing the ``synthetic-only'' caveat in
-    Sections~\ref{subsec:dtaf1topo}/\ref{sec:discussion}.
-  \item Train on the full SpaceNet corpus with GPU/pretraining
-    (Sections~\ref{subsec:trainedmodel-setup}/\ref{subsec:unet-results}), and correspondingly
-    scale up the joint training run beyond a pipeline sanity check once its basic mechanics are
-    confirmed.
-  \item Extend the point-feature pipeline (both eval, Section~\ref{subsec:pointf1}, and training,
-    Section~\ref{subsec:heatmap-loss}) to more Potsdam classes (cars).
+  \item \textbf{Raise road-intersection recall.} A third of junctions get no peak at any threshold
+    (Section~\ref{subsec:scaled-results}). Candidates: an intermediate negative-term weight between
+    the per-pixel mean and CenterNet's normalizer, or a lower-resolution heatmap head closer to
+    CenterNet's own design.
+  \item \textbf{Run an epoch-matched (or otherwise fairly controlled) comparison} between the
+    CE+Dice baseline and the joint loss (Section~\ref{sec:discussion}) --- the comparison a
+    benchmark-level claim about the new loss ultimately rests on.
+\end{itemize}
+
+Further future work:
+\begin{itemize}
+  \item Re-run \texttt{dtaf1\_topo} on the real 24-tile SpaceNet perturbation sample used for
+    Section~\ref{subsec:realdata-results}'s other real-data findings.
+  \item Fix SpaceNet6's road-on-buildings confusion (Section~\ref{sec:discussion}), e.g.\ a
+    SAR-specific encoder branch or explicit ``no road'' supervision on SAR tiles.
+  \item Separate the effect of the building-label repair from model improvement, e.g.\ by
+    re-scoring run 5's checkpoint against the repaired ground truth.
   \item Explore learned/adaptive tolerance radii instead of fixed per-class constants
     (Section~\ref{subsec:tolerance-radii}), and correspondingly a learned rather than fixed
     \texttt{iters} for \texttt{SoftClDiceLoss} (Section~\ref{subsec:cldice-loss}).
   \item Characterize DTAF1-Topo's inherited APLS failure modes on short/sparse real road segments
-    (Section~\ref{sec:discussion}'s last point) with a dedicated sensitivity sweep, mirroring
-    \texttt{sweep\_sparse\_class\_offset}'s treatment of CBHM's analogous weakness
-    (Section~\ref{subsec:class-imbalance}).
-  \item Empirically tune \texttt{PLEMMultiTaskLoss}'s per-term \texttt{weights} dict
-    (Section~\ref{sec:discussion}) once real training results are available to optimize against,
-    rather than the default equal weighting used for the ablations in
-    Section~\ref{subsec:lossablation-results}.
-  \item Investigate whether \texttt{SoftClDiceLoss} alone provides meaningful indirect
-    connectivity pressure during training (Section~\ref{sec:discussion}), as a cheaper partial
-    substitute for the connectivity term \texttt{losses/} otherwise cannot have
-    (Sections~\ref{subsec:apls}/\ref{subsec:method-principle}).
+    with a dedicated sensitivity sweep, mirroring \texttt{sweep\_sparse\_class\_offset}'s treatment
+    of CBHM's analogous weakness (Section~\ref{subsec:class-imbalance}).
+  \item Tune \texttt{PLEMMultiTaskLoss}'s per-term \texttt{weights} now that the point channel gives
+    a real signal to optimize against.
+  \item Investigate whether \texttt{SoftClDiceLoss} alone provides meaningful indirect connectivity
+    pressure during training, as a cheaper partial substitute for the connectivity term
+    \texttt{losses/} otherwise cannot have
+    (Sections~\ref{subsec:apls},~\ref{subsec:method-principle}).
+  \item Resample the three sources to a common GSD, or ablate whether the current mismatch matters.
 \end{itemize}

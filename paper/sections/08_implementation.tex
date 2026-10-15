@@ -34,13 +34,12 @@
   \end{tabular}
 \end{table}
 
-Package structure/exports note: \texttt{dtaf1\_topo}, \texttt{apls}/\texttt{apls\_multiclass}/
-\texttt{mean\_apls} are \textbf{not} re-exported at the \texttt{metrics/\_\_init\_\_.py} top level;
-\texttt{cbhm\_soft} exists only as a dict key inside \texttt{cbhm()}'s return, not a separate
-function --- deliberate, framed as ``validated on synthetic data only, not yet a drop-in
-replacement in the consolidated report'' (\texttt{evaluate\_all()}, expanded in
-Section~\ref{sec:discussion}). \texttt{losses/\_\_init\_\_.py} re-exports all five public classes
-(\texttt{ToleranceBandLoss}, \texttt{SoftBoundaryLoss}, \texttt{SoftClDiceLoss},
-\texttt{PointHeatmapLoss}, \texttt{PLEMMultiTaskLoss}) --- no equivalent ``not yet wired in''
-caveat, since Section~\ref{sec:method}'s terms are new and never had a prior consolidated entry
-point to be missing from.
+Package structure/exports note: \texttt{dtaf1\_topo} and
+\texttt{apls}/\texttt{apls\_multiclass}/\texttt{mean\_apls} are re-exported at the
+\texttt{metrics/\_\_init\_\_.py} top level, and \texttt{evaluate\_all()} computes
+\texttt{dtaf1\_topo} (skipping APLS when no linear class is requested); \texttt{cbhm\_soft} exists
+only as a dict key inside \texttt{cbhm()}'s return, not a separate function.
+\texttt{losses/\_\_init\_\_.py} re-exports all five public classes (\texttt{ToleranceBandLoss},
+\texttt{SoftBoundaryLoss}, \texttt{SoftClDiceLoss}, \texttt{PointHeatmapLoss},
+\texttt{PLEMMultiTaskLoss}). Building-tile extents are read with one HTTP Range request per tile
+(the first 64\,KB of each GeoTIFF), not by downloading the imagery.

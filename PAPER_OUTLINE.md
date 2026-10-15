@@ -10,17 +10,18 @@
 > it. Reported "final" eval-metric iterations are **DTAF1-Topo** and **`cbhm_soft`**; base
 > `dtaf1`/`cbhm` are retained as motivating baselines. All numeric values in §1, §4, and §6 were
 > computed directly against the live code (`tests/test_metrics_sanity.py`,
-> `tests/test_sensitivity.py`). The training loss is validated at three increasing levels: 20 unit
+> `tests/test_sensitivity.py`). The training loss is validated at three increasing levels: unit
 > tests plus synthetic per-term ablation sweeps (§9.4/§10.4, `tests/test_loss_sensitivity.py`); a
 > small real joint-training run across 153 SpaceNet+Potsdam tiles (§9.5/§10.5,
-> `notebooks/train_unet_joint.ipynb`) that produced real qualitative wins; and a production-scale
-> real joint-training run across 1,033 tiles and three sources — adding SpaceNet6 SAR imagery and
-> low-light augmentation for illumination robustness — trained end-to-end for 40 epochs on a CARC
-> A100 without divergence (§9.6/§10.6, `notebooks/train_unet_joint_scaled.ipynb`). That run also
-> surfaced a genuine point-head failure mode, root-caused and already fixed in `losses/heatmap.py`;
-> its evaluation-side results are pending a re-run with that fix applied. Every limitation and open
-> item found across all three validation levels is consolidated in one place, §11, rather than
-> repeated inline throughout the paper.
+> `notebooks/train_unet_joint.ipynb`); and a production-scale real joint-training pipeline across
+> 1,033 tiles and three sources — adding SpaceNet6 SAR imagery and low-light augmentation for
+> illumination robustness — developed over six full 40-epoch runs on a CARC A100 (§9.6/§10.6,
+> `notebooks/train_unet_joint_scaled.ipynb`). **The point (0D) feature is road intersections**
+> (since Oct 2026), derived from SpaceNet 3's own vector road labels and predicted by an independent
+> sigmoid head; an earlier ISPRS Potsdam tree/car point class was dropped after four runs showed it
+> unlearnable (§10.6). The final reported model (run 6, with a validation-calibrated point
+> threshold) reaches SpaceNet `cbhm_soft` 0.685 and road-intersection F1 0.279. Every limitation and
+> open item is consolidated in one place, §11, rather than repeated inline.
 
 ---
 
@@ -49,22 +50,18 @@ non-collapsing) and **DTAF1-Topo** (a raster-skeleton APLS connectivity term clo
 road-breakage blind spot). Building on this evaluation vocabulary, we then ask a training
 question: can a single model learn to predict point (0D), linear (1D), and polygonal (2D) map
 features *jointly*, using a loss shaped by the same tolerance/topology/instance-matching
-considerations that motivate these metrics, rather than a geometry-agnostic per-pixel loss? We
-introduce **`PLEMMultiTaskLoss`**, a differentiable multi-task training loss combining three
-geometry-aware terms — a soft tolerance-band term (DTAF1 analog), a soft-clDice term (Shit et
-al.'s soft-skeletonization), and a CenterNet-style Gaussian-heatmap term standing in for
-Hungarian-matched point F1, which has no tractable differentiable relaxation — plus a masked
-multi-source training scheme letting heterogeneous single-modality datasets (SpaceNet: road+
-building; Potsdam: building+point) jointly supervise one 4-class model. We validate the loss with
-20 unit tests and synthetic per-term ablation sweeps confirming each term encodes the geometric
-sensitivity it claims to. On real imagery, a joint-training run across 153 SpaceNet+Potsdam tiles
-shows all four loss terms decreasing jointly and produces qualitatively strong road+building
-predictions that a harsh composite metric alone would undersell. A subsequent production-scale
-run — three sources including SpaceNet6 SAR imagery, 1,033 tiles, 40 GPU epochs — trains to
-convergence without divergence and independently confirms the multi-source class-masking
-mechanism at scale, while also surfacing a point-head failure mode we root-cause and fix. Open
-items from all three validation stages are collected in one place (§11) rather than qualifying
-each result individually.
+considerations that motivate these metrics? We introduce **`PLEMMultiTaskLoss`**, combining a soft
+tolerance-band term (DTAF1 analog), a soft-clDice term, and a CenterNet-style Gaussian-heatmap
+term for points, plus a masked multi-source scheme letting datasets that each annotate only some
+feature types (SpaceNet: road, building and road intersections; ISPRS Potsdam and SpaceNet6 SAR:
+buildings) jointly supervise one model. Points are **road intersections**, derived from the same
+vector road labels as the road class and predicted by an independent sigmoid head. Across a
+1,033-tile, three-source production run, the final model reaches `cbhm_soft` 0.685 on SpaceNet
+test tiles and road-intersection F1 0.279 at a validation-calibrated threshold. The path there is
+itself a finding: a point channel inside the segmentation softmax flooded predictions, an earlier
+tree/car point class proved unlearnable, the heatmap loss's negative-term normalization flipped
+the detector between 30× over-detection and almost none, and 36% of SpaceNet's road-tile area
+turned out to have no public building labels at all. Open items are collected in one place (§11).
 
 ### CCS Concepts
 
@@ -93,9 +90,11 @@ detection, soft-skeletonization
 Segmentation maps of overhead imagery routinely mix feature types with fundamentally different
 geometry: **linear** features such as roads, one-dimensional structures extruded to a small
 width; **polygonal** features such as building footprints, genuinely two-dimensional regions; and
-optionally **point** features — trees, lamp posts, manhole covers — small discrete objects
-spanning only a handful of pixels. A single evaluation tile covering a city block can legitimately
-contain all three. Yet the standard tool for scoring segmentation quality, pixel IoU, treats every
+**point** features — small, discrete locations that matter as instances rather than areas. In
+this paper's trained-model pipeline the point feature is the **road intersection**: the place
+where two or more roads meet, a vertex of the road network that navigation, routing and map
+conflation depend on, and one a pixel mask of roads does not make explicit. A single evaluation
+tile covering a city block legitimately contains all three. Yet the standard tool for scoring segmentation quality, pixel IoU, treats every
 class identically as a region-overlap problem, and that assumption breaks down specifically for
 the linear case: because a road is only a few pixels wide, IoU denominators are dominated by
 exactly the pixels most sensitive to sub-pixel-scale registration noise, centerline jitter, and
@@ -130,7 +129,10 @@ perfect **1.000**, motivating DTAF1-Topo in §6.
 
 We adopt a simple, uniform data representation throughout: every input is an `H×W` `uint8` NumPy
 array of integer class labels, with `0` = background, `1` = road, `2` = building, and an optional
-`3` = point feature, used only where the underlying dataset actually has a point class. Every
+`3` = point feature. Because a road intersection lies *on* a road pixel, the trained-model
+pipeline keeps intersections as a separate per-tile point layer (an `(N, 2)` array of pixel
+coordinates, rasterized to a binary mask on demand) rather than as class `3` inside the label
+map; the eval primitives accept either form (§3.4). Every
 distance-based tolerance in the library is expressed in pixels but is meant to be tied to a
 tile's ground sample distance (GSD): `d = physical_metres / GSD_metres_per_pixel`, so the same
 physical tolerance (e.g., "3 metres of road centerline slop") applies consistently across imagery
@@ -143,12 +145,13 @@ This paper makes eight contributions:
 1. **A differentiable multi-task training loss** (§7) whose three geometric terms are direct,
    well-precedented relaxations of three of this paper's own eval metrics — soft tolerance-band
    (DTAF1), soft-clDice (Shit et al. 2021), and Gaussian-heatmap point regression (CenterNet-style)
-   — plus a masked multi-source training scheme letting heterogeneous datasets (SpaceNet
-   road+building, Potsdam building+point, SpaceNet6 building-only) jointly supervise one 4-class
-   model despite no single source annotating all three feature types. Validated via controlled
-   synthetic ablations (§9.4/§10.4), a small real joint-training run across 153 real tiles (§9.5/
-   §10.5), and a production-scale real joint-training run across 1,033 tiles and three sources
-   (§9.6/§10.6).
+   — plus a masked multi-source training scheme letting heterogeneous datasets (SpaceNet road,
+   building and road intersections; Potsdam and SpaceNet6 building-only) jointly supervise one
+   model despite no single source annotating every feature type, and an **independent sigmoid
+   point head** that keeps point supervision out of the segmentation softmax. Validated via
+   controlled synthetic ablations (§9.4/§10.4), a small real joint-training run across 153 real
+   tiles (§9.5/§10.5), and a production-scale real joint-training pipeline across 1,033 tiles and
+   three sources (§9.6/§10.6).
 2. **DTAF1** (§3.1) — a single, class-agnostic tolerance-radius F1 formula spanning linear and
    polygonal classes with one code path; scoring a newly added feature type is a configuration
    change, not a code change.
@@ -162,15 +165,19 @@ This paper makes eight contributions:
    this pipeline, see §8 — and **DTAF1-Topo** (§6.3), which blends this connectivity term into
    DTAF1 and closes the road-breakage blind spot demonstrated in Table 1.
 6. **`point_f1`** (§3.4), a point-feature metric using Hungarian instance matching rather than
-   greedy nearest-neighbor assignment, avoiding a specific adversarial failure mode.
+   greedy nearest-neighbor assignment, avoiding a specific adversarial failure mode, applied to
+   **road intersections derived directly from vector road labels** (§9.6) — so point and road
+   ground truth come from one annotation of one image and cannot disagree.
 7. Empirical validation (§9–§10) spanning nine synthetic eval-metric sensitivity sweeps, seven
    synthetic loss-ablation sweeps, a curated real-data sample from SpaceNet (four cities) and
-   ISPRS Potsdam, and two trained-model pipelines scored end-to-end by the library.
-8. **A production-scale validation of the multi-source training mechanism** (§9.6/§10.6): a
-   1,033-tile, three-source, 40-epoch run on real cloud GPU hardware that trains to convergence
-   without divergence, whose train/predict-asymmetry check gives direct evidence the per-source
-   class-masking mechanism (§7.6) behaves as designed at this scale, and which surfaced, root-
-   caused, and fixed a genuine point-head failure mode (§11).
+   ISPRS Potsdam, and three trained-model pipelines scored end-to-end by the library.
+8. **A production-scale validation and development record** (§9.6/§10.6): a 1,033-tile,
+   three-source pipeline trained six times for 40 epochs on cloud GPU hardware. Each run surfaced
+   one concrete failure mode, each root-caused and fixed in code: an unreachable heatmap target, a
+   mis-normalized negative term, a point channel flooding the segmentation softmax, an unlearnable
+   point label, a negative-term normalization that swung between over- and under-detection, and
+   **incomplete public building labels** (only 64% of SpaceNet road-tile area has building ground
+   truth). The final model reaches SpaceNet `cbhm_soft` 0.685 and road-intersection F1 0.279.
 
 The rest of the paper is organized as follows. §2 places this work relative to prior evaluation
 metrics and differentiable segmentation losses. §3 defines each eval metric primitive, following a
@@ -227,7 +234,11 @@ limitation and open item raised anywhere in the paper into one place. §12 concl
   under 75% real road-pixel deletion while `dtaf1_topo`/`apls` collapse sharply).
 - **2.5 Point/instance detection metrics** — COCO-style average precision (Lin et al.,
   arXiv:1405.0312, 2014) and the optimal bipartite-matching literature underlying `point_f1`'s
-  Hungarian assignment (Kuhn, 1955).
+  Hungarian assignment (Kuhn, 1955). Road intersections, PLEM's point feature, are the vertices of
+  the road graph that graph-based road extraction predicts explicitly — iterative graph
+  construction (RoadTracer; Bastani et al., CVPR 2018) and graph-tensor encoding (Sat2Graph; He et
+  al., ECCV 2020). PLEM instead predicts them as a separate point output next to a raster road
+  mask, and scores them as instances.
 - **2.6 Composite / multi-task segmentation evaluation** — positions the gap PLEM's *evaluation*
   half fills: existing work evaluates linear and polygonal feature types with separate,
   non-comparable metrics rather than a single class-agnostic formula (DTAF1) plus a deliberately
@@ -400,8 +411,8 @@ two `losses/` terms.
 
 ### 3.4 Point F1 — Hungarian Instance Matching
 
-For the optional point class (trees, lamp posts, manhole covers): connected-component blobs are
-reduced to centroids (`scipy.ndimage.label` + `center_of_mass`), then matched via
+For the optional point class — road intersections in the trained-model pipeline (§9.6); earlier,
+Potsdam trees (§9.2): connected-component blobs are reduced to centroids (`scipy.ndimage.label` + `center_of_mass`), then matched via
 tolerance-restricted Hungarian assignment (`scipy.optimize.linear_sum_assignment`), not greedy
 nearest-neighbor:
 
@@ -432,8 +443,9 @@ assignment and connected-component labeling have no useful gradient path back to
 
 ### 3.5 APLS — Raster-Skeleton Average Path Length Similarity
 
-No vector road graph survives anywhere in this pipeline — `datasets/common.py::rasterize_lines`
-collapses roads straight to a flat pixel mask, discarding segment/graph structure — so APLS is
+No vector road graph survives into evaluation — `datasets/common.py::rasterize_lines` collapses
+roads straight to a flat pixel mask, discarding segment/graph structure (the vector labels are
+read once at dataset-build time, only to derive intersection points, §9.6) — so APLS is
 approximated entirely from raster skeletons (`metrics/apls.py`):
 
 ```
@@ -803,7 +815,7 @@ to its eval-metric counterpart to make it differentiable:
 | DTAF1 (§3.1) | `ToleranceBandLoss` (§7.2) | GT-side dilation-by-radius precomputed once per batch (GT is a fixed target, not a model output); the harder *recall* direction — which needs an EDT of the *prediction* on the eval side — is made differentiable by soft-dilating the model's own continuous probability map via iterated max-pool instead of a detached hard threshold. **Both** precision and recall stay fully differentiable; no stop-gradient approximation was needed on either term (§7.2). |
 | Boundary F1 (§3.3) | `SoftBoundaryLoss` (§7.3) | Soft boundary map = morphological gradient `dilate(x) − erode(x)` (saturates to exactly 1.0 at a hard edge — an early `\|x − avgpool(x)\|` formulation was tried and rejected, since its peak response is well below 1.0 and silently caps achievable recall even under perfect alignment); reuses `ToleranceBandLoss`'s precision/recall primitive on this soft boundary map instead of the full class mask. |
 | clDice (§3.2) | `SoftClDiceLoss` (§7.4) | Shit et al.'s (2021) soft-skeletonization: iterated soft-erode/soft-open via max-pool/min-pool, applied directly to the probability map — no discrete `skeletonize` call. Runs for a *fixed* iteration count rather than to convergence, so width-invariance is bounded (§7.4, §11), unlike the eval-side metric. |
-| Point F1 (§3.4) | `PointHeatmapLoss` (§7.5) | **Not a relaxation.** Hungarian assignment + connected-component labeling have no useful gradient path. Reformulated entirely as CenterNet-style dense Gaussian-heatmap regression — a genuinely different formulation, not a softened version of the eval metric's algorithm. |
+| Point F1 (§3.4) | `PointHeatmapLoss` (§7.5) | **Not a relaxation.** Hungarian assignment + connected-component labeling have no useful gradient path. Reformulated entirely as CenterNet-style dense Gaussian-heatmap regression on an independent sigmoid output channel — a genuinely different formulation, not a softened version of the eval metric's algorithm. |
 | APLS / DTAF1-Topo (§3.5/§6.3) | *(none)* | No tractable lightweight differentiable relaxation of graph shortest-path recomputation exists; stays eval-only permanently — a stated design decision (§11), not a gap to be filled later. |
 
 `PLEMMultiTaskLoss` (§7.6) combines the first three, with `class_config` reused verbatim from
@@ -903,16 +915,36 @@ reformulated entirely as dense Gaussian-heatmap regression, CenterNet-style: eac
 instance's centroid (extracted via the exact same `scipy.ndimage.label` + `center_of_mass`
 pipeline `point_f1.py`'s `_instance_centroids` already uses at eval time — here purely for *target*
 construction, under `no_grad`) is burned into a Gaussian blob on a target heatmap (overlapping
-Gaussians combined via elementwise max, avoiding peak inflation where GT points cluster), and the
-point class's own softmax probability channel is trained directly against it with a
-penalty-reduced pixelwise focal loss (CornerNet/CenterNet formulation):
+Gaussians combined via elementwise max), and the nearest integer pixel of every centroid is
+stamped to exactly `1.0` so the positive term below always fires (a sub-pixel centroid otherwise
+peaks below 1.0 and receives no positive supervision at all — the first scaled run's failure,
+§10.6). The point probability `p` is trained against it with a penalty-reduced pixelwise focal
+loss (CornerNet/CenterNet formulation):
 
 ```
-gt_heatmap(x)  = max over GT centroids c of exp( -||x - c||^2 / (2 sigma^2) )
+gt_heatmap(x)  = max over GT centroids c of exp( -||x - c||^2 / (2 sigma^2) ),  stamped to 1 at round(c)
 pos_loss(x)    = -(1 - p(x))^alpha * log(p(x))                          if gt_heatmap(x) == 1
 neg_loss(x)    = -(1 - gt_heatmap(x))^beta * p(x)^alpha * log(1 - p(x))  otherwise
-loss = ( sum_x pos_loss(x) + sum_x neg_loss(x) ) / max(1, num_positive_pixels)
+loss = sum_x pos_loss(x) / N_pos  +  sum_x neg_loss(x) / Z_neg
 ```
+
+with `N_pos = max(1, #peak pixels in the batch)`, counted only over samples whose source annotates
+points. The negative normalizer `Z_neg` is a deliberate choice with large practical consequences
+(§10.6): `Z_neg = N_pos` is CenterNet's own normalizer, which prices a false-positive pixel on the
+same scale as a missed peak; `Z_neg = #negative pixels` (a per-pixel mean) makes false positives
+almost free. CenterNet applies its normalizer on a stride-4 output; at PLEM's full resolution there
+are ~100,000 background pixels per road intersection, roughly 40× CenterNet's design ratio, so
+neither choice is safe by default — the real runs over-detected 30× with the per-pixel mean and
+almost never fired with `N_pos` at a fixed threshold, and the decoding threshold must be calibrated
+on validation tiles either way.
+
+**Independent point head.** The point probability is `p = sigmoid(logits[:, point])`, an output
+channel outside the road/building/background softmax. Neither the segmentation terms nor the point
+term ever sees the other's logits, so point predictions cannot take pixels from roads or buildings
+— which a point channel inside the softmax did, flooding half of all SpaceNet test pixels (§10.6) —
+and a point may coincide with a road pixel, as every road intersection does. At inference, points
+are decoded as local maxima of `p` (non-maximum suppression over the whole stitched tile) above a
+threshold chosen by validation F1.
 
 `point_f1.py`'s Hungarian matching is untouched and remains a pure eval-time metric — a genuine
 train/eval formulation mismatch, documented rather than papered over as a relaxation (§11).
@@ -926,11 +958,12 @@ The combined loss sums a CE+soft-Dice base term (adapted from `train_unet.ipynb`
 L = w_ce_dice * L_ce_dice + w_tol * L_tolerance + w_cldice * L_cldice + w_heatmap * L_heatmap
 ```
 
-**Multi-source class masking.** SpaceNet tiles annotate road+building only (no point class exists
-at SpaceNet's GSD, §9.2); Potsdam tiles annotate building+point only (no road class in Potsdam's
-palette). Training one 4-class model on both jointly requires each sample to be supervised only on
-the classes its *source* actually annotates. This is implemented by additively biasing a sample's
-masked-out class channels to a large negative logit **before** any softmax is taken:
+**Multi-source class masking.** In the final pipeline SpaceNet tiles annotate road, building and
+road intersections, while Potsdam and SpaceNet6 tiles annotate buildings only (in §9.5's earlier
+run, Potsdam annotated building+point). Training one model on all sources jointly requires each
+sample to be supervised only on the classes its *source* actually annotates. For the softmax
+classes this is implemented by additively biasing a sample's masked-out class channels to a large
+negative logit **before** any softmax is taken:
 
 ```
 logits'[:, c] = logits[:, c] + (1 - class_mask[:, c]) * (-1e4)     # per-sample, per-channel
@@ -941,7 +974,12 @@ pre-softmax logit to `-inf` makes its post-softmax probability — and therefore
 contribution to *every* term at once — vanish identically. This is a single mechanism shared by
 all four loss terms, rather than four bespoke masking implementations, and relies on target label
 maps never containing a class id a sample's source doesn't annotate (true by construction for both
-`datasets/spacenet.py` and `datasets/potsdam.py`'s rasterizers, §9.2, §9.5).
+`datasets/spacenet.py` and `datasets/potsdam.py`'s rasterizers, §9.2, §9.5). The same mechanism
+handles **unlabelled areas within a source**: a SpaceNet training patch that touches any area
+without public building labels (§9.6) gets building masked out for that patch, and any building
+pixels in it relabelled background, so unlabelled buildings are never taught as "not a building".
+The independent point head (§7.5) is excluded per sample instead — a sample whose source has no
+point labels contributes nothing to the point term — since it has no softmax to mask.
 `PLEMMultiTaskLoss.forward()` returns a dict (`"loss"` plus each active sub-term as a detached
 float) — mirroring §3's "always return a dict of named scalars" convention on the training side,
 so per-epoch logging code looks structurally similar to `evaluate_all()`'s output.
@@ -968,13 +1006,14 @@ so per-epoch logging code looks structurally similar to `evaluate_all()`'s outpu
   | Graph algorithms | `networkx` (APLS shortest paths), `scipy.spatial.cKDTree` (snap-matching) |
   | Optimal assignment | `scipy.optimize.linear_sum_assignment` (Point F1, eval-only) |
   | Geospatial I/O | `rasterio`, `shapely` |
-  | Data acquisition | `requests` (anonymous S3), `kaggle` (Potsdam mirror) |
+  | Data acquisition | `requests` (anonymous S3, including HTTP Range reads of tif headers for building-tile extents), `kaggle` (Potsdam mirror) |
   | Differentiable training losses | `torch`/`torch.nn.functional` (CPU-only) — `max_pool2d`/`avg_pool2d`-based dilation/erosion; no `kornia`/`torchvision` dependency added |
   | Testing/analysis | `pytest`, `pandas`, `matplotlib`, `jupyterlab` |
 
-- Package structure/exports note: `dtaf1_topo`, `apls`/`apls_multiclass`/`mean_apls` are **not**
-  re-exported at the `metrics/__init__.py` top level, and `cbhm_soft` exists only as a dict key
-  inside `cbhm()`'s return, not a separate function (§11). `losses/__init__.py` re-exports all five
+- Package structure/exports note: `dtaf1_topo` and `apls`/`apls_multiclass`/`mean_apls` are
+  re-exported at the `metrics/__init__.py` top level, and `evaluate_all()` computes `dtaf1_topo`
+  (skipping APLS when no linear class is requested); `cbhm_soft` exists only as a dict key inside
+  `cbhm()`'s return, not a separate function. `losses/__init__.py` re-exports all five
   public classes (`ToleranceBandLoss`, `SoftBoundaryLoss`, `SoftClDiceLoss`, `PointHeatmapLoss`,
   `PLEMMultiTaskLoss`).
 
@@ -991,9 +1030,11 @@ so per-epoch logging code looks structurally similar to `evaluate_all()`'s outpu
 ### 9.2 Real-Data Sample
 
 SpaceNet SN2 (buildings, 650×650px) + SN3 (roads, 1300×1300px) from the public unauthenticated S3
-bucket, cities Vegas/Khartoum/Paris/Shanghai, up to ~100 tiles curated, the two tiling grids
-reconciled via coarse-then-dense nearest-neighbor spatial matching, verified by rasterized pixel
-overlap (not just bbox overlap). Plus ISPRS Potsdam (6cm/px) for the point class (trees), 15 crops
+bucket, cities Vegas/Khartoum/Paris/Shanghai, up to ~100 tiles curated. A 1300px road tile spans
+a 2×2 block of 650px building tiles. This curated sample reconciled the two tiling grids with a
+coarse-then-dense nearest-neighbor search over tile ids; the production pipeline (§9.6) replaced
+it with an exact index of every building tile's extent after finding that the approximate search
+silently missed overlapping tiles. Plus ISPRS Potsdam (6cm/px) for the point class (trees), 15 crops
 via a Kaggle mirror, thresholded by palette color + connected-component labeled.
 
 No trained extractor was available for most of this evaluation, so "pred" = real GT run through
@@ -1049,6 +1090,9 @@ motivating `PLEMMultiTaskLoss`'s per-term `weights` dict for rebalancing during 
 
 ### 9.5 Joint Multi-Source Training Setup
 
+*(This small run predates the switch to road intersections: its point class is Potsdam's
+tree/car blobs inside the softmax. It is kept as the proof of concept §9.6 scales up.)*
+
 Neither SpaceNet nor Potsdam alone annotates all three feature types (§7.6): SpaceNet supplies
 road+building but no point class; Potsdam's 6-class palette includes `building` and point-capable
 `tree`/`car` classes but no road/linear class at all. A genuinely joint 0D/1D/2D training run
@@ -1076,29 +1120,53 @@ same 256×256 *pixel* patch size regardless.
 
 ### 9.6 Scaled Production Training Setup
 
-§9.5's run establishes that the masked multi-source mechanism works mechanically; this run tests
-whether it holds up at a scale and source count closer to a real deployment, and adds the paper's
-illumination-robustness angle. Two changes over §9.5: a third data source, **SpaceNet6** —
-Capella Space SAR imagery over Rotterdam with building-footprint labels only
-(`datasets/spacenet6.py`), converted to a pseudo-RGB image via percentile-clip normalization
-(`sar_bands_to_pseudo_rgb`) so it flows through the unmodified 3-channel `SmallUNet` — and
-`datasets/joint.py::SOURCE_CLASSES` gaining `"spacenet6": [2]` with no other code change, since the
-class-masking mechanism (§7.6) is source-count-agnostic by design. SAR is an active sensor, so it
-looks identical day or night — the real, illumination-invariant half of a two-pronged
-night-robustness approach; the synthetic half is `datasets/augment.py::simulate_low_light`
-(gamma darkening → brightness/contrast/saturation jitter → CLAHE → sensor-noise injection), applied
-to a random 40% of training patches (`dark_aug_prob=0.4`) regardless of source.
+§9.5's run establishes that the masked multi-source mechanism works mechanically; this pipeline
+tests it at a scale and source count closer to a real deployment, adds the paper's
+illumination-robustness angle, and is where the final point feature was settled.
 
-Scaled-up per-source samples (`n_tiles=175`/city for SpaceNet, up from 25; `n_crops=200` for
-Potsdam) plus the SpaceNet6 tarball were cached and loaded: **1,033 tiles total — 550 SpaceNet +
-200 Potsdam + 283 SpaceNet6** — split 70/15/15 independently per source, then concatenated
-(spacenet 385/82/83, potsdam 140/30/30, spacenet6 198/42/43 train/val/test; **723 train / 154 val /
-156 test** tiles overall). Training is GPU-scaled (`EPOCHS=40`, `BATCH_SIZE=48`, mixed precision,
-`CosineAnnealingLR`, early stopping at `PATIENCE=3` on val_loss) with periodic rolling checkpoints
-in addition to the best-val-loss checkpoint, and — unlike every other run in this paper — requires
-a cloud GPU: this notebook (`train_unet_joint_scaled.ipynb`) asserts CUDA availability and installs
-a CUDA `torch` wheel in its own first cell rather than silently falling back to CPU. It was run
-once on a CARC A100 (results: §10.6).
+**Sources.** A third data source, **SpaceNet6** — Capella Space SAR imagery over Rotterdam with
+building-footprint labels only (`datasets/spacenet6.py`) — is converted to a pseudo-RGB image via
+percentile-clip normalization (`sar_bands_to_pseudo_rgb`) so it flows through the unmodified
+3-channel `SmallUNet`. SAR is an active sensor, so it looks identical day or night — the real,
+illumination-invariant half of a two-pronged night-robustness approach; the synthetic half is
+`datasets/augment.py::simulate_low_light` (gamma darkening → brightness/contrast/saturation jitter
+→ CLAHE → sensor-noise injection), applied to a random 40% of training patches regardless of
+source. Scaled-up per-source samples give **1,033 tiles — 550 SpaceNet + 200 Potsdam + 283
+SpaceNet6** — split 70/15/15 independently per source (spacenet 385/82/83, potsdam 140/30/30,
+spacenet6 198/42/43; **723 train / 154 val / 156 test** tiles). In the final configuration
+`SOURCE_CLASSES = {"spacenet": [1, 2, 3], "potsdam": [2], "spacenet6": [2]}`.
+
+**Point labels: road intersections.** `datasets/intersections.py` derives intersections from
+SpaceNet 3's vector road centerlines: it counts road "arms" at every vertex shared between road
+LineStrings (an endpoint contributes one arm, an interior vertex two) and keeps vertices with
+three or more arms — X- and T-junctions, including a T whose through road is not split there.
+Lines that cross without a shared vertex (overpasses) are not counted. Nodes closer than 20 px
+(6 m) are merged, since complex junctions and dual carriageways otherwise produce tight clusters.
+On real SN3 geojsons this vertex rule agrees with geometric noding (`shapely.ops.unary_union`) on
+11 of 12 sampled tiles, and every derived point falls on a road pixel. The cached sample carries
+**8,907 intersections over 550 tiles** (16.2 per tile; 528 tiles have at least one). Points are
+scored with `point_f1` at a 10 px (3 m) tolerance — the same tolerance roads get — on SpaceNet
+tiles only; the headline is the micro-averaged F1 over all test tiles.
+
+**Building labels and the `building_valid` mask.** An exact index of every SN2 building tile's
+extent (read from the first 64 KB of each tif with one HTTP Range request) replaces §9.2's
+approximate search, and every overlapping building tile is rasterized. Some 2×2 building-tile
+blocks are simply absent from the public SN2 training set, so each tile also records where
+building labels are known. Measured on all 257 Paris road tiles, only 9% are fully covered and 55%
+of tile area has building labels on average; across the 550-tile sample, coverage is **64% of tile
+area** (80 tiles fully covered, 254 at or below half). Repairing the labels raised building pixels
+from 65.7M to 96.6M. Training switches building supervision off for any SpaceNet patch touching
+an unlabelled area (5,941 of 13,860 SpaceNet training patches, 43%, §7.6), and evaluation drops
+predicted buildings in unlabelled areas before scoring.
+
+**Training and evaluation.** `EPOCHS=40`, `BATCH_SIZE=48`, mixed precision, `CosineAnnealingLR`,
+gradient clipping at norm 5.0, best checkpoint and early stopping (`PATIENCE=8`) on a validation
+selection loss, and a CUDA-only notebook (`train_unet_joint_scaled.ipynb`) run on a CARC A100. The
+point head's output-channel bias starts at −4.6 (probability ≈ 0.01). After training, the point
+threshold is chosen by micro F1 on the SpaceNet **validation** tiles over a grid from 0.002 to 0.5;
+test tiles are never used to choose it. Each tile is scored only on the feature types its source
+annotates. A dark-test sweep re-scores every test tile at four fixed low-light severities
+(0.0/0.3/0.6/0.9).
 
 ---
 
@@ -1258,46 +1326,75 @@ budget rather than a masking failure.
 
 ### 10.6 Scaled Production Training Results
 
-§9.6's run (`notebooks/train_unet_joint_scaled.ipynb`, CARC A100) trains the same mechanism at
-roughly 7× the tile count and a third data source. **It converges cleanly for the full 40-epoch
-budget**: val_loss falls from `2.2894` (epoch 1) to a best of **`1.5067`** (epoch 39, held at
-epoch 40); early stopping (`PATIENCE=3`) never triggers. Per-epoch sub-term breakdown at the
-endpoints:
+**Final model** (run 6, best checkpoint at epoch 38 of 40, validation-calibrated point threshold).
+The loss components all decline over the full 40 epochs (train: `ce_dice` 1.074 → 0.740,
+`tolerance` 0.408 → 0.278, `cldice` 0.733 → 0.560, `heatmap` 4.494 → 3.511; validation selection
+loss 6.017 → best 4.349). Test-set means per source, each tile scored only on the classes its
+source annotates:
 
-| Epoch | train_loss | val_loss | ce_dice | tolerance | cldice | heatmap |
+| source (test tiles) | `cbhm_soft` | `cbhm` | `dtaf1_topo` | `dtaf1` | `bf_mean` | `cldice_mean` |
 |---|---|---|---|---|---|---|
-| 1 | 3.6933 | 2.2894 | 1.2373 | 0.5754 | 0.7537 | 1.1270 |
-| 40 | 1.6628 | 1.5067 | 0.7559 | 0.3723 | 0.5343 | 0.0004 |
+| SpaceNet (83) | **0.685** | 0.645 | 0.482 | 0.771 | 0.741 | 0.602 |
+| Potsdam (30) | 0.568 | 0.568 | 0.559 | 0.559 | 0.568 | — |
+| SpaceNet6 (43) | 0.350 | 0.350 | 0.300 | 0.300 | 0.350 | — |
 
-`ce_dice`, `tolerance`, and `cldice` all decline steadily across the full 40 epochs, at three times
-the data and a third source relative to §10.5 — evidence the loss composition and the masking
-mechanism scale, not just run once at small size.
+`dtaf1_topo` reads well below `dtaf1` on SpaceNet (0.482 vs. 0.771): this is its first real-data
+use, and the gap is the raster-skeleton APLS term penalizing road fragmentation that plain DTAF1
+cannot see — the §6 blind spot, now observed on a trained model's output. On Potsdam and
+SpaceNet6, which have no linear class, `cbhm_soft` reduces to the building score and `dtaf1_topo`
+equals `dtaf1`.
 
-**The masking mechanism itself is directly verified at this scale.** A train/predict-asymmetry
-check confirms `predict_tile()`'s signature has no `class_mask`/source argument (inference always
-produces an unmasked 4-class argmax, by design — only the *training* loss is source-masked, §7.6)
-and reports real predicted-pixel counts per class per source:
+**Road intersections** (SpaceNet test tiles; 82 of 83 contain at least one): 547 predicted against
+1,389 real, 270 matched within 3 m — **micro precision 0.494, recall 0.194, F1 0.279** (mean
+per-tile F1 0.213). The threshold the validation tiles chose was 0.1 (validation micro F1 0.280);
+0.07 was almost tied (0.278) with a predicted-per-real ratio of 1.19 instead of 0.38. Two
+diagnostics bound what calibration alone can achieve:
 
-| source | road px | building px | point px |
+- *Separability.* The head's probability at real intersections has median 0.046 (10th–90th
+  percentile 0.016–0.120), against median 0.013 (90th percentile 0.029, 99th 0.052) on road pixels
+  more than 30 px from any intersection. The head ranks junctions above plain road, but the
+  distributions overlap.
+- *Recall ceiling.* Even at a threshold of 0.002, only 62% of validation intersections have any
+  peak within 10 px; a third of junctions are invisible to the head at any threshold.
+
+**Train/predict asymmetry.** `predict_tile()` takes no source or class-mask argument, so inference
+always produces every output regardless of which classes a tile's source annotates. Predicted
+pixels per class on the test tiles:
+
+| source | road px | building px | intersection px (instances) |
 |---|---|---|---|
-| potsdam | 4,760 | 799,355 | 0 |
-| spacenet | 11,847,618 | 5,139,252 | 0 |
-| spacenet6 | 405,423 | 1,142,827 | 0 |
+| Potsdam | 12,743 | 835,743 | 0 (0) |
+| SpaceNet | 10,660,448 | 18,622,699 | 13,655 (547) |
+| SpaceNet6 | 543,764 | 521,035 | 0 (0) |
 
-Building is predicted correctly on all three sources, as expected since every source annotates it.
-Road and point predictions leaking onto sources whose own ground truth never contains that class
-(e.g. road pixels on Potsdam/SpaceNet6 tiles) is an expected consequence of a shared, unmasked
-inference head, not evidence the training-time masking mechanism failed — masking only withholds
-gradient from a class a sample's source doesn't annotate, it does not, and is not meant to,
-restrict what the shared head can output at inference.
+The intersection head predicts only on optical road imagery. SpaceNet6 is the exception for roads:
+544K road pixels on SAR tiles, mostly along rows of buildings, which is where SpaceNet6's building
+score is lost — SpaceNet6 never supervises the road class, so nothing in training says those are
+not roads.
 
-**Point channel:** predicted point-pixel count is `0` on every source, including Potsdam, matching
-the `heatmap` sub-term's sharp early collapse in the table above (`1.1270 → 0.0119` by epoch 2,
-`0.0004` by epoch 40) and the same pattern §10.5 shows at small scale. We root-caused this (§11)
-and the fix is already committed in `losses/heatmap.py`; re-running this notebook's evaluation with
-the fix applied is the immediate next step (§11/§12), not yet done — this run's per-source test
-metrics, dark-robustness sweep, and qualitative panel were not captured and are reported honestly
-as not yet available rather than estimated (§11).
+**Darkness.** Re-scoring the same test tiles at simulated low-light severities 0.0/0.3/0.6/0.9:
+SpaceNet `cbhm_soft` 0.685 / 0.592 / 0.561 / 0.434, Potsdam 0.568 / 0.543 / 0.528 / 0.481,
+SpaceNet6 0.350 / 0.330 / 0.331 / 0.328 (radar, unaffected by design), and road-intersection F1
+0.279 / 0.209 / 0.193 / 0.071. Points degrade faster than buildings or roads.
+
+**Development record.** The final configuration is the sixth full 40-epoch run of this pipeline.
+Each earlier run failed in one specific, diagnosable way; we report them because each failure mode
+is general to multi-task, multi-source training with a point head, and because each fix is now
+covered by a regression test:
+
+| run | point feature / head | `cbhm` potsdam / spacenet / spacenet6 | point outcome | root cause → fix |
+|---|---|---|---|---|
+| 1 | Potsdam trees/cars, in softmax | 0.59 / 0.47 / 0.40† | 0 predicted | sub-pixel centroids never reached the 1.0 the focal loss gates on → stamp the nearest pixel to 1.0 |
+| 2 | same | not evaluated | 0 predicted; buildings collapsed to 0 px | negative term divided by the tiny peak count; heatmap was 97% of epoch-1 gradient → per-pixel negative mean, gradient clipping |
+| 3 | same | 0.29 / 0.28 / 0.20 | flooded ~half of SpaceNet test pixels | masked sources give the point channel no gradient, but inference takes a 4-way argmax → decode points separately; point-only "no point here" prior on unlabelled sources |
+| 4 | same | 0.55 / 0.34 / 0.29 | honest F1 0.028, ~33× over-detection | the labels: 30–60 px blobs at 6 cm/px, one source only → switch to road intersections |
+| 5 | road intersections, independent sigmoid head | 0.59 / 0.47 / 0.41 | F1 0.025, 41,097 predicted vs 1,389 real | per-pixel negative mean makes false positives nearly free → CenterNet normalizer |
+| 6 | same | 0.57 / **0.645** / 0.35‡ | 1 predicted at fixed 0.3; **F1 0.279** calibrated | normalizer overshoots at full resolution → validation-calibrated threshold |
+
+*† Run 1's evaluation cell outputs were not preserved in the notebook; values are from the run's
+recorded summary. ‡ Run 6's building scores use the repaired, coverage-masked building ground
+truth and are not directly comparable with runs 1–5.* The runs differ in more than one setting at
+a time, so the table is a development record, not an ablation.
 
 ---
 
@@ -1308,17 +1405,24 @@ sections is expanded here exactly once.
 
 ### 11.1 Evaluation-Library Limitations
 
-- DTAF1's road-breakage blind spot (§4.2, §6.1) is fixed by DTAF1-Topo (§6.3), but DTAF1-Topo is
-  validated on **synthetic data only** (§6.3.2) — not yet re-run on the real 24-tile sample
-  (§10.2), and not yet wired into `evaluate_all()` (§8).
+- DTAF1's road-breakage blind spot (§4.2, §6.1) is fixed by DTAF1-Topo (§6.3), which is now part of
+  `evaluate_all()` and has been run on a trained model's real test output (§10.6, SpaceNet
+  `dtaf1_topo` 0.482 vs. `dtaf1` 0.771). It has still not been re-run on §10.2's 24-tile
+  perturbation sample, so the real-data road-dropout finding there is not yet re-checked with it.
 - `cbhm_soft` (§5.2) only helps when the failing class is also the pixel-count minority; when a
   class sparse by *area* is not sparse by *pixel count* (`Khartoum_img371`), the fix is partial
   (0.000 → 0.285, vs. a clean 0.48–0.52 → 0.85 recovery on `Khartoum_img333`).
 - clDice is brittle on short/sparse real road segments (§3.2) — moderate offsets can collapse it
   to exactly 0 even when DTAF1 degrades gracefully. Neither composite is uniformly more
   trustworthy — report `cbhm`, `cbhm_soft`, `dtaf1`, and `dtaf1_weighted` together, not one alone.
-- APLS (§3.5) here is a raster-skeleton approximation, not true vector-graph APLS, since no vector
-  road graph survives the `rasterize_lines` step anywhere in the pipeline (§8).
+- APLS (§3.5) here is a raster-skeleton approximation, not true vector-graph APLS: the model
+  predicts a road mask, not a graph, so evaluation has no predicted vector graph to compare. The
+  vector *ground-truth* graph is used only at dataset-build time, to derive intersection points.
+- **Road-intersection ground truth inherits SpaceNet's labelling conventions.** Intersections are
+  shared vertices of the vector road labels, so a junction the annotators did not snap, or an
+  at-grade crossing drawn without a shared vertex, is missing from the ground truth; conversely an
+  overpass drawn with a shared vertex would be counted. The vertex rule agreed with geometric
+  noding on 11 of 12 sampled tiles, but this was not audited at scale.
 - The harmonic-blend asymmetry proved in §6.3.1 (DTAF1-Topo can only ever pull a score *down*
   toward APLS, never up) is intentional, but means DTAF1-Topo inherits every one of APLS's own
   failure modes (e.g. a genuinely correct but very short/sparse road segment with too few sampled
@@ -1333,6 +1437,12 @@ sections is expanded here exactly once.
   granularity — it may still learn to produce broken roads that look locally correct, the failure
   mode §6.1 formalizes on the eval side. Whether `SoftClDiceLoss` alone provides enough indirect
   connectivity pressure in practice is open (§12).
+- **The heatmap's negative-term normalization has no safe default at full resolution** (§7.5,
+  §10.6). The per-pixel mean over-detected 30×; CenterNet's peak-count normalizer, at ~40× its
+  designed background-to-peak ratio, kept peak probabilities near 0.03 so that a fixed 0.3 threshold
+  found 1 intersection out of 1,389. Validation calibration recovers F1 0.279, but recall is capped
+  by training (62% of intersections have no peak even at threshold 0.002). An intermediate negative
+  weight, or a lower-resolution heatmap head as in CenterNet itself, is untested.
 - **`PointHeatmapLoss` is a genuine train/eval formulation mismatch, not a relaxation** (§7.5):
   Point F1 (§3.4) is evaluated via Hungarian instance matching but trained via dense heatmap
   regression — different algorithms with different failure modes, so minimizing the heatmap loss
@@ -1346,15 +1456,16 @@ sections is expanded here exactly once.
   point perturbations (§9.4, §10.4) — a real property of its CornerNet-style focal formulation, not
   a bug. `PLEMMultiTaskLoss`'s per-term `weights` dict exists specifically to rebalance this; the
   right weighting has not yet been empirically tuned against real training results.
-- `dtaf1_topo`/`apls`/`apls_multiclass`/`mean_apls` are not re-exported at `metrics/__init__.py`'s
-  top level, and `cbhm_soft` exists only as a dict key inside `cbhm()`'s return rather than a
-  separate function (§8) — validated on synthetic data so far, not yet promoted to a drop-in
-  `evaluate_all()` default.
+- **SpaceNet6 is the weakest source** (`cbhm_soft` 0.350, §10.6): the model labels rows of SAR
+  building returns as road. SpaceNet6 never supervises the road class, so per-source masking (§7.6)
+  gives the road channel no signal there; the same mechanism that lets sources annotate different
+  classes leaves this confusion unpenalized. A SAR-specific encoder branch, or supervising "no road"
+  on SAR tiles, is untested.
 - The `max_instances` cap added to `gt_centroids_to_heatmap` (`losses/heatmap.py`, default 100) is
   a defensive bound found necessary while profiling `train_unet_joint.ipynb`: a pathological,
   non-blob-like synthetic target drove its per-centroid Python loop to thousands of connected
-  components, stalling a training batch for minutes with no error. Real Potsdam crops top out
-  around two dozen instances per tile, so the cap is a no-op on real data.
+  components, stalling a training batch for minutes with no error. Real tiles carry at most a few
+  dozen intersections per 256 px patch, so the cap is a no-op on real data.
 - SpaceNet/Potsdam/SpaceNet6 are not resampled to a common ground sample distance (§9.5/§9.6) — a
   Potsdam or SpaceNet6 training patch covers a different physical area than a SpaceNet patch at the
   same pixel size. Neither joint run surfaced an obvious qualitative failure mode from this, but a
@@ -1371,23 +1482,16 @@ sections is expanded here exactly once.
   on a strictly harder 4-term joint task with a second data source contributing under 1% of
   training patches — these numbers show the pipeline runs correctly end-to-end, not a verdict on
   the new loss's quality relative to CE+Dice. Closing this gap is the paper's top priority (§12).
-- **The point head collapsed in both real joint-training runs.** The small run's `heatmap` sub-term
-  drops sharply within 2 epochs (0.346 → 0.010, §10.5); the production-scale run shows the same
-  pattern more starkly across 40 epochs (1.127 → 0.0004, §10.6) and its asymmetry check confirms
-  zero predicted point pixels on every source, including Potsdam. We root-caused this: GT centroid
-  targets were burned at their sub-pixel float location, so for any blob wider than one pixel the
-  heatmap peak never reached the `1.0` threshold `heatmap_focal_loss` gates its positive term on,
-  leaving the point channel with only push-to-zero gradient. The fix (stamping each centroid's
-  nearest integer pixel to exactly `1.0`, plus a per-term loss-weight bump and oversampling of
-  point-bearing patches) is already committed in `losses/heatmap.py` and covered by a regression
-  test (`TestPointHeatmapLoss::test_fractional_centroid_still_supervised`), but **has not yet been
-  re-validated by a full training re-run** — the paper's other co-top-priority item (§12).
-- **The production-scale run's test-set evaluation, dark-robustness sweep, and qualitative review
-  were not captured.** §9.6/§10.6's training run itself completed and converged cleanly, but the
-  notebook cells that would report per-source `dtaf1_topo`/`cbhm_soft`/`point_f1` test aggregates,
-  the 0.0/0.3/0.6/0.9 dark-severity sweep, and named best/worst tiles did not execute in the
-  committed run. Re-running them (ideally together with the point-head fix above, so the numbers
-  reflect a working point channel) is future work (§12), not reported here as if measured.
+- **Point-head history.** Runs 1–5 of §10.6 each failed on the point feature in a different way
+  (zero predictions, a loss blow-up, flooding, an unlearnable label, 30× over-detection); every
+  root cause is fixed in code and covered by a regression test, but the current model's point
+  recall (0.194 on test) is still limited (§11.2).
+- **Building scores are not comparable across the production runs.** Run 6 repaired the building
+  ground truth and scores buildings only where labels exist (§9.6), so its SpaceNet building gain
+  (`bf_mean` 0.43 → 0.74) mixes better labels with better predictions; the two were not separated.
+- **The production runs are a development sequence, not an ablation.** Consecutive runs changed
+  more than one setting (point label, head type, loss normalization, building labels), so no
+  single setting's effect is isolated by §10.6's table.
 - A `DARK_AUG_PROB=0` re-run compared against §10.6 on the same dark-test sweep, to isolate the
   low-light augmentation's specific contribution from the effect of more data/epochs/sources, has
   not been run.
@@ -1405,44 +1509,45 @@ afterward, and answers it with concrete, increasingly demanding evidence rather 
 results alone. `PLEMMultiTaskLoss` combines three differentiable analogs of those metrics
 (tolerance, topology, and — via a genuine reformulation rather than a relaxation — point-instance
 localization) into one multi-task loss, with a masked multi-source training scheme letting
-datasets that individually annotate only two or three of three feature types jointly supervise one
-4-class model. §9.4/§10.4's synthetic ablations confirm each term encodes the geometric sensitivity
-it was designed to. §9.5/§10.5's real joint-training run goes further: all four terms learn jointly
-on real imagery, `evaluate_all()`'s point-feature path runs end-to-end on a real trained model for
-the first time, and the qualitative review turns up a genuine, well-explained real-data example of
-why CBHM's harsh composite and DTAF1's lenient one are both needed (§3.6, §10.5). §9.6/§10.6 goes
-further still: the identical mechanism trains to full, stable 40-epoch convergence at roughly 7×
-the data and a third heterogeneous source on real cloud GPU hardware, and its asymmetry check gives
-direct, real evidence that the per-source class-masking mechanism (§7.6) — the paper's central
-multi-source training contribution — behaves exactly as designed at that scale. That same run also
-did what a real validation pass should: it surfaced a genuine failure mode (the point head's
-sub-pixel-centroid bug) that the synthetic ablations and the small real run's own `heatmap` collapse
-had already hinted at but not fully diagnosed, and we root-caused and fixed it in code. Two items,
-not one, are this paper's highest priority next steps, and neither is decided yet:
+datasets that individually annotate only some of the three feature types jointly supervise one
+model. §9.4/§10.4's synthetic ablations confirm each term encodes the geometric sensitivity
+it was designed to. §9.5/§10.5's small real joint-training run shows all four terms learning
+jointly and turns up a real-data example of why CBHM's harsh composite and DTAF1's lenient one are
+both needed (§3.6, §10.5). §9.6/§10.6 carries the mechanism to a 1,033-tile, three-source
+production pipeline. Its final model reaches SpaceNet `cbhm_soft` 0.685 and detects road
+intersections — the point feature, derived from the same vector labels as the roads — at F1 0.279.
+Its six-run development record is as much a result as the final numbers: a point channel inside
+the segmentation softmax floods it, a point label that exists on one source only and spans tens of
+pixels is unlearnable, the heatmap loss's negative normalization has no safe default at full
+resolution, and a widely used public dataset leaves a third of its road-tile area without building
+labels. Each was caught by measuring rather than assuming — per-term loss logs, per-source
+predicted-pixel counts, point scores restricted to tiles that actually contain points, and
+qualitative panels — and most of those checks are built on §3–§6's protocol.
 
-- **Re-run §9.6's production-scale training with the point-head fix applied**, and capture the
-  test-set/`dtaf1_topo`/`cbhm_soft`/`point_f1` aggregates, the dark-robustness sweep, and the
-  qualitative panel that §10.6's committed run did not capture — the direct evidence needed to
-  claim the point channel, and the full pipeline at scale, actually work rather than merely run.
-- **Run an epoch-matched (or otherwise fairly controlled) comparison** between the CE+Dice baseline
-  and the joint loss (§11.3) — §10.5's 2-epoch run cannot separate "the new loss underperforms"
-  from "2 epochs on a harder task underperforms," and this is the comparison a benchmark-level claim
-  about the new loss ultimately rests on.
+The highest-priority next steps:
+
+- **Raise road-intersection recall.** A third of junctions get no peak at any threshold (§10.6).
+  Candidates: an intermediate negative-term weight between the per-pixel mean and CenterNet's
+  normalizer, or a lower-resolution heatmap head closer to CenterNet's own design.
+- **Run an epoch-matched (or otherwise fairly controlled) comparison** between the CE+Dice
+  baseline and the joint loss (§11.3) — the comparison a benchmark-level claim about the new loss
+  ultimately rests on.
 
 Further future work:
 
-- Wire `dtaf1_topo` into `evaluate_all()` and `metrics/__init__.py` as the default after re-running
-  it on the real 24-tile SpaceNet sample already used for §10.2's other real-data findings, closing
-  §11.1's "synthetic-only" item.
-- Extend the point-feature pipeline (both eval, §3.4, and training, §7.5) to more Potsdam classes
-  (cars).
+- Re-run `dtaf1_topo` on the real 24-tile SpaceNet perturbation sample used for §10.2's other
+  real-data findings (§11.1).
+- Fix SpaceNet6's road-on-buildings confusion (§11.2), e.g. a SAR-specific encoder branch or
+  explicit "no road" supervision on SAR tiles.
+- Separate the effect of the building-label repair from model improvement (§11.3), e.g. by
+  re-scoring run 5's checkpoint against the repaired ground truth.
 - Explore learned/adaptive tolerance radii instead of fixed per-class constants (§5.3), and
   correspondingly a learned rather than fixed `iters` for `SoftClDiceLoss` (§7.4).
 - Characterize DTAF1-Topo's inherited APLS failure modes on short/sparse real road segments (§11.1)
   with a dedicated sensitivity sweep, mirroring `sweep_sparse_class_offset`'s treatment of CBHM's
   analogous weakness (§5.1).
-- Empirically tune `PLEMMultiTaskLoss`'s per-term `weights` dict (§11.2) once a working point
-  channel gives a real signal to optimize against, rather than the default equal weighting used for
+- Empirically tune `PLEMMultiTaskLoss`'s per-term `weights` dict (§11.2) now that the point channel
+  gives a real signal to optimize against, rather than the default equal weighting used for
   §9.4/§10.4's ablations.
 - Investigate whether `SoftClDiceLoss` alone provides meaningful indirect connectivity pressure
   during training (§11.2), as a cheaper partial substitute for the connectivity term `losses/`
@@ -1486,6 +1591,9 @@ Claude Code, and were checked and are the responsibility of the author(s).
   pixelwise focal loss). *(§2.7, §7.5)*
 - Zhou, Wang & Krähenbühl, "Objects as Points" ("CenterNet"), 2019 (heatmap regression for
   keypoint/center-point detection). *(§2.7, §7.5)*
+- Bastani et al., "RoadTracer: Automatic Extraction of Road Networks from Aerial Images," CVPR 2018.
+  *(§2.5)*
+- He et al., "Sat2Graph: Road Graph Extraction through Graph-Tensor Encoding," ECCV 2020. *(§2.5)*
 
 ---
 
@@ -1681,7 +1789,9 @@ plus `scipy.ndimage.label` + `center_of_mass`'s `O(N)` connected-component pass 
 profile to B.5's centroid extraction, since it is the same operation, here used for target
 construction rather than eval-time matching) — no `O(k³)` Hungarian term, since this loss performs
 no assignment at all (§7.5, §11). `heatmap_focal_loss` is `O(B·N)`, a constant number of pointwise
-tensor operations. Total: `O(B·N)` — asymptotically the cheapest of the four `losses/` terms, and
+tensor operations (identical for either negative normalizer, §7.5, and for the sigmoid point
+head, whose `sigmoid` is one more pointwise operation). Total: `O(B·N)` — asymptotically the
+cheapest of the four `losses/` terms, and
 notably *without* B.5's `O(k³)` combinatorial cost, since dense heatmap regression sidesteps
 instance-level assignment entirely (the same property that makes it a reformulation rather than a
 relaxation, §7.1/§7.5).
