@@ -23,6 +23,7 @@ from losses.boundary import SoftBoundaryLoss
 from losses.cldice import SoftClDiceLoss, soft_cldice
 from losses.heatmap import PointHeatmapLoss, gt_centroids_to_heatmap
 from losses.multitask import PLEMMultiTaskLoss
+from losses.baseline import ConventionalSegLoss
 
 
 # ---------------------------------------------------------------------------
@@ -608,3 +609,83 @@ class TestHeatmapNegativeNormalization:
         gt_heatmap, clean, _ = self._case()
         with pytest.raises(ValueError):
             heatmap_focal_loss(clean, gt_heatmap, neg_norm="bogus")
+
+
+class TestConventionalSegLoss:
+    """The conventional baseline (losses/baseline.py): CE+Dice on the segmentation
+    channels, BCE+Dice on the point channel. Its base term must equal the joint
+    loss's exactly, so a baseline-vs-joint comparison differs only in the extra terms."""
+
+    SEG = combine(ROAD, BUILDING)
+    SEG_BATCH = to_batch(SEG)
+    PT_MASK = torch.zeros((1, *SHAPE))
+    PT_MASK[0, 14:17, 15:18] = 1.0
+    SPACENET = torch.tensor([[1.0, 1.0, 1.0, 1.0]])
+    POTSDAM = torch.tensor([[1.0, 0.0, 1.0, 0.0]])
+
+    def _perfect(self):
+        logits = perfect_logits(self.SEG)
+        logits[0, 3, 14:17, 15:18] = 12.0  # the whole stamped square, as BCE wants
+        return logits
+
+    def test_perfect_prediction_low_loss(self):
+        out = ConventionalSegLoss()(self._perfect(), self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        assert_finite(out["loss"])
+        assert set(out) == {"loss", "ce_dice", "point_bce_dice"}
+        assert out["loss"].item() < 0.1, f"got {out['loss'].item():.4f}"
+
+    def test_ce_dice_matches_joint_loss(self):
+        joint = PLEMMultiTaskLoss(
+            class_config={1: {"name": "road", "tolerance": 6}, 2: {"name": "building", "tolerance": 2}},
+            linear_classes=[1], polygon_classes=[2], point_classes=[3], point_head="sigmoid",
+        )
+        torch.manual_seed(0)
+        logits = torch.randn((2, 4, *SHAPE))
+        target = torch.cat([self.SEG_BATCH, to_batch(BUILDING)])
+        class_mask = torch.cat([self.SPACENET, self.POTSDAM])
+        pt = torch.cat([self.PT_MASK, torch.zeros((1, *SHAPE))])
+        a = joint(logits, target, class_mask, pt)["ce_dice"]
+        b = ConventionalSegLoss()(logits, target, class_mask, pt)["ce_dice"]
+        assert a == pytest.approx(b, abs=1e-6)
+
+    def test_point_logit_does_not_move_ce_dice(self):
+        loss_fn = ConventionalSegLoss()
+        base = loss_fn(self._perfect(), self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        changed = self._perfect()
+        changed[:, 3] += 14.0
+        out = loss_fn(changed, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        assert out["ce_dice"] == pytest.approx(base["ce_dice"], abs=1e-6)
+        assert out["point_bce_dice"] > base["point_bce_dice"] + 0.1
+
+    def test_non_point_source_gets_zero_point_gradient(self):
+        logits = uniform_logits().clone().requires_grad_(True)
+        out = ConventionalSegLoss()(logits, to_batch(BUILDING), self.POTSDAM, torch.zeros((1, *SHAPE)))
+        out["loss"].backward()
+        assert_finite(logits.grad)
+        assert logits.grad[:, 3].abs().max().item() == 0.0
+        assert out["point_bce_dice"] == 0.0
+
+    def test_pos_weight_raises_missed_point_cost(self):
+        logits = perfect_logits(self.SEG)  # predicts no point at all
+        plain = ConventionalSegLoss(pos_weight=1.0)(logits, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        weighted = ConventionalSegLoss(pos_weight=50.0)(logits, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        assert weighted["point_bce_dice"] > plain["point_bce_dice"] + 1.0
+
+    def test_gradient_flow_and_decrease(self):
+        loss_fn = ConventionalSegLoss()
+        param = torch.nn.Parameter(uniform_logits().clone())
+        opt = torch.optim.Adam([param], lr=0.5)
+        first = loss_fn(param, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        for _ in range(8):
+            opt.zero_grad()
+            out = loss_fn(param, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+            out["loss"].backward()
+            assert_finite(param.grad)
+            opt.step()
+        last = loss_fn(param, self.SEG_BATCH, self.SPACENET, self.PT_MASK)
+        assert last["loss"].item() < first["loss"].item()
+        assert last["point_bce_dice"] < first["point_bce_dice"]
+
+    def test_requires_point_target(self):
+        with pytest.raises(ValueError):
+            ConventionalSegLoss()(self._perfect(), self.SEG_BATCH, self.SPACENET)

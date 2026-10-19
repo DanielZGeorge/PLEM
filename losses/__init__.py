@@ -15,8 +15,10 @@ from losses.boundary import SoftBoundaryLoss
 from losses.cldice import SoftClDiceLoss
 from losses.heatmap import PointHeatmapLoss
 from losses.multitask import PLEMMultiTaskLoss
+from losses.baseline import ConventionalSegLoss
 
 __all__ = [
+    "ConventionalSegLoss",
     "ToleranceBandLoss",
     "SoftBoundaryLoss",
     "SoftClDiceLoss",

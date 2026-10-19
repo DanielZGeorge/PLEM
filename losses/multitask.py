@@ -45,6 +45,27 @@ def _mask_logits(logits: torch.Tensor, class_mask: torch.Tensor, neg_value: floa
     return logits + bias
 
 
+def ce_dice_loss(logits: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """
+    CrossEntropy + soft multiclass Dice (unweighted sum), adapted from
+    train_unet.ipynb's `combined_loss`. Expects already class-masked logits.
+    Shared by PLEMMultiTaskLoss and losses/baseline.py so the conventional
+    baseline's base term is identical to the joint loss's.
+    """
+    num_classes = logits.shape[1]
+    ce = F.cross_entropy(logits, target)
+
+    probs = torch.softmax(logits, dim=1)
+    target_onehot = F.one_hot(target, num_classes).permute(0, 3, 1, 2).float()
+    dims = (0, 2, 3)
+    intersection = (probs * target_onehot).sum(dims)
+    union = probs.sum(dims) + target_onehot.sum(dims)
+    dice_per_class = (2 * intersection + eps) / (union + eps)
+    dice = 1.0 - dice_per_class.mean()
+
+    return ce + dice
+
+
 class PLEMMultiTaskLoss(nn.Module):
     """
     Parameters
@@ -131,18 +152,7 @@ class PLEMMultiTaskLoss(nn.Module):
         on already class-masked logits (see `forward`), so no separate
         masking logic is needed here.
         """
-        num_classes = logits.shape[1]
-        ce = F.cross_entropy(logits, target)
-
-        probs = torch.softmax(logits, dim=1)
-        target_onehot = F.one_hot(target, num_classes).permute(0, 3, 1, 2).float()
-        dims = (0, 2, 3)
-        intersection = (probs * target_onehot).sum(dims)
-        union = probs.sum(dims) + target_onehot.sum(dims)
-        dice_per_class = (2 * intersection + self.dice_eps) / (union + self.dice_eps)
-        dice = 1.0 - dice_per_class.mean()
-
-        return ce + dice
+        return ce_dice_loss(logits, target, self.dice_eps)
 
     def _point_suppress(self, logits: torch.Tensor, class_mask: torch.Tensor) -> torch.Tensor:
         """

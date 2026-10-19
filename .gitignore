@@ -12,3 +12,6 @@ data/
 models/*
 !models/*.py
 .claude/
+
+# Per-tile prediction maps from train_unet_joint_scaled.ipynb (large; tables beside them are tracked)
+results/scaled/preds/
