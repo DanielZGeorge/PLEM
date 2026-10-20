@@ -1,0 +1,10 @@
+{
+  "variant": "plem",
+  "checkpoint": "unet_joint_intersections_scaled.pt",
+  "point_decode": "nms",
+  "point_thresh": 0.1,
+  "point_thresh_default": 0.3,
+  "best_epoch": 38,
+  "epochs_run": 40,
+  "rescore_only": false
+}

@@ -1,0 +1,10 @@
+{
+  "variant": "baseline",
+  "checkpoint": "unet_baseline_scaled.pt",
+  "point_decode": "components",
+  "point_thresh": 0.7,
+  "point_thresh_default": 0.5,
+  "best_epoch": 36,
+  "epochs_run": 40,
+  "rescore_only": false
+}
