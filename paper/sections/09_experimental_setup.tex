@@ -165,3 +165,38 @@ selection loss, on a single A100. The point head's output-channel bias starts at
 SpaceNet \textbf{validation} tiles over a grid from 0.002 to 0.5; test tiles are never used to
 choose it. Each tile is scored only on the feature types its source annotates. A dark-test sweep
 re-scores every test tile at four fixed low-light severities (0.0/0.3/0.6/0.9).
+
+\subsection{Conventional-Training Baseline Setup}
+\label{subsec:baseline-setup}
+
+To separate what the joint loss contributes from what the pipeline contributes, a baseline is
+trained in the same notebook with everything held fixed except the loss and the
+checkpoint-selection rule: same data, tile split, patches, building-coverage masking, per-source
+class masking (Section~\ref{subsec:multitask-loss}), low-light augmentation, seed, network,
+optimizer, schedule, and 40-epoch ceiling with patience 8.
+
+\begin{itemize}
+  \item \textbf{Loss.} Cross-entropy + soft Dice on the road/building softmax --- the same function
+    as \texttt{PLEMMultiTaskLoss}'s base term, verified identical by a parity test --- and, for
+    intersections, per-pixel binary cross-entropy + soft Dice on the sigmoid channel against the
+    stamped $5\times5$ intersection squares, i.e.\ intersections treated as an ordinary rare
+    foreground class. The BCE positive weight is the training set's background-to-intersection
+    pixel ratio capped at 100 (raw ratio 5,770). No tolerance, clDice, or heatmap term, and no low
+    starting bias on the point channel.
+  \item \textbf{Selection.} Early stopping and the best checkpoint on validation mIoU over
+    background/road/building/intersection, the field's usual practice; the joint model keeps its
+    validation-loss rule.
+  \item \textbf{Intersection decoding.} Threshold the probability map, take connected components,
+    and report each centroid --- the standard path for a binary mask --- at the conventional 0.5
+    and at a threshold chosen on validation tiles by the same procedure as the joint model's, so a
+    difference in intersection scores cannot come from threshold choice alone.
+  \item \textbf{Scoring.} Both models are scored on the same 156 test tiles with conventional
+    metrics --- pixel accuracy, per-class IoU and mIoU (a class the source never annotates is
+    mapped to background on both sides; buildings are scored where labels exist), pixel IoU of the
+    intersection squares --- and with PLEM's metrics. Differences are paired by tile: mean, a 95\%
+    bootstrap confidence interval (10,000 resamples), and a two-sided Wilcoxon signed-rank test.
+\end{itemize}
+
+The comparison tests two separate claims: that conventional and PLEM metrics can disagree about
+which of two models is better (the \emph{metric claim}), and that the joint loss is better on
+PLEM's metrics at matched training (the \emph{loss claim}).

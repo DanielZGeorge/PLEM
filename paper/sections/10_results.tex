@@ -332,3 +332,90 @@ ablation.
   \end{tabular}
 \end{table*}
 
+\subsection{Conventional Baseline vs.\ the Joint Loss}
+\label{subsec:baseline-results}
+
+Both models ran all 40 epochs (best epoch: baseline 36 by validation mIoU, joint model 38). The
+joint model is run 6 of Section~\ref{subsec:scaled-results}, re-executed with the conventional-metric
+columns; its numbers reproduce Table~\ref{tab:scaled-test} exactly.
+
+\begin{table*}
+  \caption{Conventional (CE+Dice, mIoU-selected) vs.\ joint-loss model on the same test tiles,
+  means per source. Left block: conventional metrics; right block: PLEM's.}
+  \label{tab:baseline-test}
+  \small
+  \begin{tabular}{@{}llcccc|cccccc@{}}
+    \toprule
+    Source (tiles) & Model & Pix.\ acc. & mIoU & IoU road & IoU bldg & cbhm\_soft & dtaf1 &
+      dtaf1\_topo & APLS & cldice & bf \\
+    \midrule
+    SpaceNet (83) & conventional & 0.876 & 0.570 & 0.354 & 0.496 & 0.647 & 0.701 & 0.444 & 0.128 & 0.559 & 0.721 \\
+                  & joint loss   & 0.874 & 0.572 & 0.389 & 0.469 & \textbf{0.685} & \textbf{0.771} & \textbf{0.482} & 0.149 & 0.602 & 0.741 \\
+    Potsdam (30)  & conventional & 0.742 & 0.509 & ---   & 0.455 & 0.573 & 0.564 & 0.564 & --- & --- & 0.573 \\
+                  & joint loss   & 0.708 & 0.478 & ---   & 0.400 & 0.568 & 0.559 & 0.559 & --- & --- & 0.568 \\
+    SpaceNet6 (43) & conventional & 0.931 & 0.477 & ---  & 0.023 & 0.071 & 0.063 & 0.063 & --- & --- & 0.071 \\
+                   & joint loss   & 0.923 & 0.480 & ---  & 0.037 & \textbf{0.350} & 0.300 & 0.300 & --- & --- & 0.350 \\
+    \bottomrule
+  \end{tabular}
+\end{table*}
+
+\begin{table}
+  \caption{Road intersections on SpaceNet test tiles (1,389 real), micro-averaged.}
+  \label{tab:baseline-points}
+  \small
+  \begin{tabular}{@{}lcccccc@{}}
+    \toprule
+    Model, threshold & Pred. & Match & P & R & F1 & Pix.\ IoU \\
+    \midrule
+    conventional, 0.5       & 2,604 & 389 & 0.149 & 0.280 & 0.195 & 0.025 \\
+    conventional, cal.\ 0.7 & 1,174 & 280 & 0.239 & 0.202 & 0.218 & 0.024 \\
+    joint, 0.3              & 1     & 1   & 1.000 & 0.001 & 0.001 & 0.013 \\
+    joint, cal.\ 0.1        & 547   & 270 & 0.494 & 0.194 & \textbf{0.279} & 0.033 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\textbf{Metric claim: supported.} On SpaceNet the conventional metrics call the two models a tie:
+the paired mIoU difference is $+0.002$ (95\% CI $-0.004$ to $+0.008$, $p = 0.64$), and pixel
+accuracy is 0.003 lower for the joint model. Every PLEM metric separates them, with confidence
+intervals excluding zero: \texttt{dtaf1} $+0.069$, clDice $+0.043$, \texttt{cbhm} $+0.043$,
+\texttt{dtaf1\_topo} $+0.038$, \texttt{cbhm\_soft} $+0.038$, road APLS $+0.020$, BF $+0.020$
+($p \le 0.002$ for each). The tie in mIoU hides two opposite moves, road IoU $+0.036$ and building
+IoU $-0.026$; on buildings IoU and BF point in opposite directions, i.e.\ the joint model's
+footprints overlap the ground truth less but have better-placed boundaries. Tile by tile, the mIoU
+and \texttt{dtaf1\_topo} differences have opposite signs on 30 of 83 tiles (\texttt{cbhm}: 23 of
+83); the largest case, \texttt{Vegas\_img1407}, loses 0.088 mIoU and gains 0.109
+\texttt{dtaf1\_topo} (APLS $+0.20$). Within either model, Kendall's $\tau$ between per-tile mIoU
+and the PLEM segmentation metrics is 0.47--0.80, and only 0.30 for intersection F1. For
+intersections the gap is starkest (Table~\ref{tab:baseline-points}): pixel IoU of the intersection
+squares is 0.01--0.03 for every model and threshold and does not track detection quality, which
+ranges from F1 0.001 to 0.279.
+
+SpaceNet6 is the extreme case: mIoU is level (0.477 vs.\ 0.480) and both models fail by building
+IoU (0.023 vs.\ 0.037), yet BF and \texttt{cbhm} are 0.071 vs.\ 0.350. The baseline predicts almost
+no buildings on SAR (148K pixels over 43 tiles, 4 tiles empty); the joint model predicts buildings
+on every tile (521K pixels), placed near the ground-truth boundaries but barely overlapping them.
+We suspect SAR layover, which displaces building returns from their footprints, but have not
+verified it. This is evidence that the joint model finds SAR buildings that pixel overlap does not
+credit, not that either model is a good SAR building detector.
+
+\textbf{Loss claim: supported on SpaceNet and SpaceNet6, not on Potsdam.} On SpaceNet the joint
+model is better on every PLEM metric and on intersections: micro F1 0.279 against the baseline's
+0.218 when both thresholds are calibrated on validation tiles (per-tile mean F1 difference
+$+0.045$, CI $+0.009$ to $+0.081$, $p = 0.015$). The baseline is not worse on every point
+statistic: its probabilities spread wider, so its calibrated threshold gives a predicted/real ratio
+near 1 (0.85, against the joint model's 0.39). On Potsdam (buildings only) the PLEM metrics show no
+difference (\texttt{cbhm} $-0.004$, CI $-0.037$ to $+0.029$), while the conventional metrics favour
+the \emph{baseline} (building IoU $-0.055$ for the joint model, $p = 0.02$).
+
+\textbf{Darkness.} The joint model degrades less on PLEM's metrics. At severity 0.9, SpaceNet
+\texttt{cbhm\_soft} is 0.434 vs.\ 0.302 and Potsdam 0.481 vs.\ 0.387, although the two models start
+level on Potsdam. mIoU shows a much smaller gap on SpaceNet (0.414 vs.\ 0.391) and on Potsdam still
+favours the baseline at every severity (0.378 vs.\ 0.406 at 0.9).
+
+\emph{Caveats.} One training seed per model; the confidence intervals capture test-tile variation,
+not training variation. The two selection rules differ by design. With ${\sim}28$ paired
+comparisons, the SpaceNet and SpaceNet6 PLEM-metric differences survive a Bonferroni correction
+(threshold 0.0018) except road APLS ($p = 0.0020$); the intersection-F1 and Potsdam IoU differences
+do not.
+

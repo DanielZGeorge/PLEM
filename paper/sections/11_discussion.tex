@@ -89,12 +89,15 @@ sections is expanded here exactly once.
     is trained on ${\sim}100$ curated real tiles with no pretraining, CPU-only --- a real
     end-to-end validation of the metric library, but too small a dataset to read as a segmentation
     benchmark result.
-  \item \textbf{No epoch-matched comparison exists between the CE+Dice baseline and the joint
-    loss.} The small joint run's SpaceNet-only aggregate (\texttt{cbhm} 0.144, \texttt{dtaf1}
-    0.304, Section~\ref{subsec:joint-results}) reads below the baseline's 15-epoch numbers
-    (\texttt{cbhm} 0.316, \texttt{dtaf1} 0.440), but it trained for only 2 epochs on a strictly
-    harder task. These numbers show the pipeline runs end-to-end, not a verdict on the new loss
-    relative to CE+Dice.
+  \item \textbf{The matched baseline comparison rests on one seed per model}
+    (Section~\ref{subsec:baseline-results}). Its paired confidence intervals cover test-tile
+    variation only; the SpaceNet PLEM-metric gaps ($+0.02$ to $+0.07$) are small enough that
+    training-seed variance could account for part of them, and the intersection-F1 gain
+    ($p = 0.015$) does not survive a multiple-comparison correction. The baseline also embodies
+    choices a reader could make differently: mIoU selection, connected-component decoding, and a
+    BCE positive weight capped at 100. The small-scale runs of
+    Sections~\ref{subsec:unet-results} and~\ref{subsec:joint-results} (15 vs.\ 2 epochs, different
+    tasks) are superseded by Section~\ref{subsec:baseline-results} for this question.
   \item \textbf{Point-head history.} Runs 1--5 of Table~\ref{tab:scaled-history} each failed on
     the point feature in a different way; every root cause is fixed in code and covered by a
     regression test, but the current model's point recall (0.194 on test) is still limited.

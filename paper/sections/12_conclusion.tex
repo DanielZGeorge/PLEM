@@ -25,6 +25,12 @@ third of its road-tile area without building labels. Each was caught by measurin
 assuming --- per-term loss logs, per-source predicted-pixel counts, point scores restricted to tiles
 that actually contain points, and qualitative panels --- and most of those checks are built on
 Sections~\ref{sec:evalprotocol}--\ref{sec:topological}'s protocol.
+Section~\ref{subsec:baseline-results} trains the same pipeline the conventional way: on SpaceNet the
+two models tie on mIoU, while \texttt{cbhm\_soft}, \texttt{dtaf1\_topo}, clDice, BF, APLS, and
+intersection F1 all favour the joint loss, and on SpaceNet6 a model that fails by IoU either way
+scores 0.350 against 0.071 on boundary F1. The metrics this paper proposes therefore separate
+models that pixel overlap rates as equal; whether the joint loss's margin exceeds training-seed
+variance is the next thing to measure.
 
 The highest-priority next steps:
 \begin{itemize}
@@ -32,9 +38,10 @@ The highest-priority next steps:
     (Section~\ref{subsec:scaled-results}). Candidates: an intermediate negative-term weight between
     the per-pixel mean and CenterNet's normalizer, or a lower-resolution heatmap head closer to
     CenterNet's own design.
-  \item \textbf{Run an epoch-matched (or otherwise fairly controlled) comparison} between the
-    CE+Dice baseline and the joint loss (Section~\ref{sec:discussion}) --- the comparison a
-    benchmark-level claim about the new loss ultimately rests on.
+  \item \textbf{Repeat the baseline comparison over more training seeds}
+    (Section~\ref{subsec:baseline-results}). With one seed per model, mIoU ties while every PLEM
+    metric favours the joint loss on SpaceNet; two or three more seeds per model would show whether
+    that gap exceeds training variance.
 \end{itemize}
 
 Further future work:

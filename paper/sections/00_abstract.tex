@@ -19,7 +19,10 @@ and SpaceNet6 SAR: buildings) jointly supervise one model. Points are \emph{road
 derived from the same vector road labels as the road class and predicted by an independent
 sigmoid head. Across a 1,033-tile, three-source production run, the final model reaches
 \texttt{cbhm\_soft} 0.685 on SpaceNet test tiles and road-intersection F1 0.279 at a
-validation-calibrated threshold. The path there is itself a finding: a point channel inside the
+validation-calibrated threshold. Against a conventionally trained baseline (cross-entropy + Dice,
+selected on mIoU) on identical data, the two models tie on mIoU (0.570 vs.\ 0.572) while every
+PLEM metric favours the joint loss (\texttt{cbhm\_soft} $+0.038$, intersection F1 0.279 vs.\
+0.218): a difference pixel IoU does not register. The path there is itself a finding: a point channel inside the
 segmentation softmax flooded predictions, an earlier tree/car point class proved unlearnable, the
 heatmap loss's negative-term normalization flipped the detector between $30\times$
 over-detection and almost none, and 36\% of SpaceNet's road-tile area turned out to have no

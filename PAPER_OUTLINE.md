@@ -20,7 +20,9 @@
 > (since Oct 2026), derived from SpaceNet 3's own vector road labels and predicted by an independent
 > sigmoid head; an earlier ISPRS Potsdam tree/car point class was dropped after four runs showed it
 > unlearnable (§10.6). The final reported model (run 6, with a validation-calibrated point
-> threshold) reaches SpaceNet `cbhm_soft` 0.685 and road-intersection F1 0.279. Every limitation and
+> threshold) reaches SpaceNet `cbhm_soft` 0.685 and road-intersection F1 0.279. A matched
+conventional-training baseline (§9.7/§10.7) ties it on mIoU and loses on every PLEM metric on
+SpaceNet (one seed per model). Every limitation and
 > open item is consolidated in one place, §11, rather than repeated inline.
 
 ---
@@ -57,7 +59,10 @@ feature types (SpaceNet: road, building and road intersections; ISPRS Potsdam an
 buildings) jointly supervise one model. Points are **road intersections**, derived from the same
 vector road labels as the road class and predicted by an independent sigmoid head. Across a
 1,033-tile, three-source production run, the final model reaches `cbhm_soft` 0.685 on SpaceNet
-test tiles and road-intersection F1 0.279 at a validation-calibrated threshold. The path there is
+test tiles and road-intersection F1 0.279 at a validation-calibrated threshold. Against a
+conventionally trained baseline (cross-entropy + Dice, selected on mIoU) on identical data, the two
+models tie on mIoU (0.570 vs. 0.572) while every PLEM metric favours the joint loss (`cbhm_soft`
++0.038, intersection F1 0.279 vs. 0.218): a difference pixel IoU does not register. The path there is
 itself a finding: a point channel inside the segmentation softmax flooded predictions, an earlier
 tree/car point class proved unlearnable, the heatmap loss's negative-term normalization flipped
 the detector between 30× over-detection and almost none, and 36% of SpaceNet's road-tile area
@@ -178,6 +183,11 @@ This paper makes eight contributions:
    point label, a negative-term normalization that swung between over- and under-detection, and
    **incomplete public building labels** (only 64% of SpaceNet road-tile area has building ground
    truth). The final model reaches SpaceNet `cbhm_soft` 0.685 and road-intersection F1 0.279.
+9. **A matched conventional-training baseline** (§9.7/§10.7): the same pipeline trained with
+   cross-entropy + Dice and selected on mIoU. The two models tie on mIoU (0.570 vs. 0.572) on
+   SpaceNet, while every PLEM metric favours the joint loss, and the two kinds of metric order
+   tiles differently (opposite-sign differences on 30 of 83 tiles). This is direct evidence that
+   conventional metrics and PLEM's measure different things, not only that they could.
 
 The rest of the paper is organized as follows. §2 places this work relative to prior evaluation
 metrics and differentiable segmentation losses. §3 defines each eval metric primitive, following a
@@ -1168,6 +1178,39 @@ test tiles are never used to choose it. Each tile is scored only on the feature 
 annotates. A dark-test sweep re-scores every test tile at four fixed low-light severities
 (0.0/0.3/0.6/0.9).
 
+### 9.7 Conventional-Training Baseline Setup
+
+To separate what the joint loss contributes from what the pipeline contributes, a baseline is
+trained in the same notebook (`PLEM_VARIANT=baseline`) with everything held fixed except the loss
+and the checkpoint-selection rule: same data, tile split, patches, building-coverage masking,
+per-source class masking (§7.6), low-light augmentation, seed, `SmallUNet`, optimizer, schedule and
+40-epoch ceiling with `PATIENCE=8`.
+
+- **Loss** (`losses/baseline.py::ConventionalSegLoss`): cross-entropy + soft Dice on the
+  road/building softmax — the same function as `PLEMMultiTaskLoss`'s base term, verified
+  identical by a parity test — and, for intersections, per-pixel binary cross-entropy + soft Dice
+  on the sigmoid channel against the stamped 5×5 intersection squares, i.e. intersections treated
+  as an ordinary rare foreground class. The BCE positive weight is the training set's
+  background-to-intersection pixel ratio capped at 100 (raw ratio 5,770). No tolerance, clDice or
+  heatmap term, and no low starting bias on the point channel.
+- **Selection:** early stopping and the best checkpoint on validation mIoU over
+  background/road/building/intersection, the field's usual practice; the joint model keeps its
+  validation-loss rule (§9.6).
+- **Intersection decoding:** threshold the probability map, take connected components, report
+  each centroid — the standard path for a binary mask. It is reported at the conventional 0.5 and
+  at a threshold chosen on the validation tiles by the same procedure as the joint model's, so a
+  difference in intersection scores cannot come from threshold choice alone.
+- **Scoring:** both models are scored on the same 156 test tiles with conventional metrics —
+  pixel accuracy, per-class IoU and mIoU (a class the source never annotates is mapped to
+  background on both sides; buildings are scored inside `building_valid`), pixel IoU of the
+  intersection squares — and with PLEM's metrics. Differences are paired by tile: mean, a 95%
+  bootstrap confidence interval (10,000 resamples) and a two-sided Wilcoxon signed-rank test
+  (`notebooks/baseline_comparison.ipynb`, per-tile tables in `results/scaled/`).
+
+The comparison tests two separate claims: that conventional and PLEM metrics can disagree about
+which of two models is better (the *metric claim*), and that the joint loss is better on PLEM's
+metrics at matched training (the *loss claim*).
+
 ---
 
 ## 10. Results
@@ -1396,6 +1439,71 @@ recorded summary. ‡ Run 6's building scores use the repaired, coverage-masked 
 truth and are not directly comparable with runs 1–5.* The runs differ in more than one setting at
 a time, so the table is a development record, not an ablation.
 
+### 10.7 Conventional Baseline vs. the Joint Loss
+
+Both models ran all 40 epochs (best epoch: baseline 36 by validation mIoU, joint model 38). The
+joint model is §10.6's run 6, re-executed with the new conventional-metric columns; its numbers
+reproduce §10.6 exactly. Test-set means per source:
+
+| source | model | pixel acc. | mIoU | IoU road | IoU bldg | `cbhm_soft` | `dtaf1` | `dtaf1_topo` | APLS | clDice | BF |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| SpaceNet (83) | conventional | 0.876 | 0.570 | 0.354 | 0.496 | 0.647 | 0.701 | 0.444 | 0.128 | 0.559 | 0.721 |
+| | joint loss | 0.874 | 0.572 | 0.389 | 0.469 | **0.685** | **0.771** | **0.482** | 0.149 | 0.602 | 0.741 |
+| Potsdam (30) | conventional | 0.742 | 0.509 | — | 0.455 | 0.573 | 0.564 | 0.564 | — | — | 0.573 |
+| | joint loss | 0.708 | 0.478 | — | 0.400 | 0.568 | 0.559 | 0.559 | — | — | 0.568 |
+| SpaceNet6 (43) | conventional | 0.931 | 0.477 | — | 0.023 | 0.071 | 0.063 | 0.063 | — | — | 0.071 |
+| | joint loss | 0.923 | 0.480 | — | 0.037 | **0.350** | 0.300 | 0.300 | — | — | 0.350 |
+
+Road intersections, SpaceNet test tiles (1,389 real, micro-averaged):
+
+| model, threshold | predicted | matched | precision | recall | F1 | pixel IoU |
+|---|---|---|---|---|---|---|
+| conventional, default 0.5 | 2,604 | 389 | 0.149 | 0.280 | 0.195 | 0.025 |
+| conventional, calibrated 0.7 | 1,174 | 280 | 0.239 | 0.202 | 0.218 | 0.024 |
+| joint loss, default 0.3 | 1 | 1 | 1.000 | 0.001 | 0.001 | 0.013 |
+| joint loss, calibrated 0.1 | 547 | 270 | 0.494 | 0.194 | **0.279** | 0.033 |
+
+**Metric claim: supported.** On SpaceNet the conventional metrics call the two models a tie:
+paired ΔmIoU +0.002 (95% CI −0.004 to +0.008, p = 0.64), and pixel accuracy is 0.003 lower for the
+joint model. Every PLEM metric separates them, with confidence intervals excluding zero: `dtaf1`
++0.069, clDice +0.043, `cbhm` +0.043, `dtaf1_topo` +0.038, `cbhm_soft` +0.038, road APLS +0.020,
+BF +0.020 (p ≤ 0.002 for each). The tie in mIoU hides two opposite moves, road IoU +0.036 and
+building IoU −0.026; on buildings IoU and BF point in opposite directions, i.e. the joint model's
+footprints overlap the ground truth less but have better-placed boundaries. Tile by tile, ΔmIoU
+and Δ`dtaf1_topo` have opposite signs on 30 of 83 tiles (Δ`cbhm`: 23 of 83); the largest case,
+`Vegas_img1407`, loses 0.088 mIoU and gains 0.109 `dtaf1_topo` (APLS +0.20). Within either model,
+Kendall's τ between per-tile mIoU and the PLEM segmentation metrics is 0.47–0.80, and only 0.30 for
+intersection F1. For intersections the gap is starkest: pixel IoU of the intersection squares is
+0.02–0.03 for every model and threshold and does not track detection quality, which ranges from
+F1 0.001 to 0.279.
+
+SpaceNet6 is the extreme case: mIoU is level (0.477 vs. 0.480) and both models fail by building
+IoU (0.023 vs. 0.037), yet BF and `cbhm` are 0.071 vs. 0.350. The baseline predicts almost no
+buildings on SAR (148K pixels over 43 tiles, 4 tiles empty); the joint model predicts buildings on
+every tile (521K pixels), placed near the ground-truth boundaries but barely overlapping them. We
+suspect SAR layover, which displaces building returns from their footprints, but have not verified
+it. This is evidence that the joint model finds SAR buildings that pixel overlap does not credit,
+not that either model is a good SAR building detector.
+
+**Loss claim: supported on SpaceNet and SpaceNet6, not on Potsdam.** On SpaceNet the joint model
+is better on every PLEM metric and on intersections: micro F1 0.279 against the baseline's 0.218
+when both thresholds are calibrated on validation tiles (per-tile mean ΔF1 +0.045, CI +0.009 to
++0.081, p = 0.015). The baseline is not worse on every point statistic: its probabilities spread
+wider, so its calibrated threshold gives a predicted/real ratio near 1 (0.85, against the joint
+model's 0.39). On Potsdam (buildings only) the PLEM metrics show no difference (`cbhm` −0.004, CI
+−0.037 to +0.029), while the conventional metrics favour the **baseline** (building IoU −0.055 for
+the joint model, p = 0.02). The two kinds of metric disagree there too, in the baseline's favour.
+
+**Darkness.** The joint model degrades less on PLEM's metrics. At severity 0.9, SpaceNet
+`cbhm_soft` is 0.434 vs. 0.302 and Potsdam 0.481 vs. 0.387, although the two models start level on
+Potsdam. mIoU shows a much smaller gap on SpaceNet (0.414 vs. 0.391) and on Potsdam still favours
+the baseline at every severity (0.378 vs. 0.406 at 0.9).
+
+*Caveats.* One training seed per model; the confidence intervals capture test-tile variation, not
+training variation. The two selection rules differ by design. With ~28 paired comparisons, the
+SpaceNet and SpaceNet6 PLEM-metric differences survive a Bonferroni correction (threshold 0.0018)
+except road APLS (p = 0.0020); the intersection-F1 and Potsdam IoU differences do not.
+
 ---
 
 ## 11. Discussion & Limitations
@@ -1476,12 +1584,14 @@ sections is expanded here exactly once.
 - The CE+Dice baseline (§9.3/§10.3) is trained on ~100 curated real tiles with no pretraining,
   CPU-only — a real, useful end-to-end validation of the metric library, but too small a dataset to
   read as a segmentation benchmark result.
-- **No epoch-matched comparison exists yet between the CE+Dice baseline and the joint loss.** The
-  small joint run's SpaceNet-only aggregate (`cbhm` 0.144, `dtaf1` 0.304, §10.5) reads below the
-  baseline's 15-epoch numbers (`cbhm` 0.316, `dtaf1` 0.440, §10.3), but it trained for only 2 epochs
-  on a strictly harder 4-term joint task with a second data source contributing under 1% of
-  training patches — these numbers show the pipeline runs correctly end-to-end, not a verdict on
-  the new loss's quality relative to CE+Dice. Closing this gap is the paper's top priority (§12).
+- **The matched baseline comparison (§9.7/§10.7) rests on one seed per model.** Its paired
+  confidence intervals cover test-tile variation only; the SpaceNet PLEM-metric gaps (+0.02 to
+  +0.07) are small enough that training-seed variance could account for part of them, and the
+  intersection-F1 gain (p = 0.015) does not survive a multiple-comparison correction. The
+  baseline also embodies choices a reader could make differently: mIoU selection, connected-
+  component decoding and a BCE positive weight capped at 100. The small-scale runs of §10.3 and
+  §10.5 are not comparable with each other (15 vs. 2 epochs, different tasks) and are superseded
+  by §10.7 for this question.
 - **Point-head history.** Runs 1–5 of §10.6 each failed on the point feature in a different way
   (zero predictions, a loss blow-up, flooding, an unlearnable label, 30× over-detection); every
   root cause is fixed in code and covered by a regression test, but the current model's point
@@ -1516,6 +1626,11 @@ jointly and turns up a real-data example of why CBHM's harsh composite and DTAF1
 both needed (§3.6, §10.5). §9.6/§10.6 carries the mechanism to a 1,033-tile, three-source
 production pipeline. Its final model reaches SpaceNet `cbhm_soft` 0.685 and detects road
 intersections — the point feature, derived from the same vector labels as the roads — at F1 0.279.
+§9.7/§10.7 trains the same pipeline the conventional way: on SpaceNet the two models tie on mIoU,
+while `cbhm_soft`, `dtaf1_topo`, clDice, BF, APLS and intersection F1 all favour the joint loss, and
+on SpaceNet6 a model that fails by IoU either way scores 0.350 against 0.071 on boundary F1. The
+metrics this paper proposes therefore separate models that pixel overlap rates as equal; whether
+the joint loss's margin exceeds training-seed variance is the next thing to measure.
 Its six-run development record is as much a result as the final numbers: a point channel inside
 the segmentation softmax floods it, a point label that exists on one source only and spans tens of
 pixels is unlearnable, the heatmap loss's negative normalization has no safe default at full
@@ -1529,9 +1644,9 @@ The highest-priority next steps:
 - **Raise road-intersection recall.** A third of junctions get no peak at any threshold (§10.6).
   Candidates: an intermediate negative-term weight between the per-pixel mean and CenterNet's
   normalizer, or a lower-resolution heatmap head closer to CenterNet's own design.
-- **Run an epoch-matched (or otherwise fairly controlled) comparison** between the CE+Dice
-  baseline and the joint loss (§11.3) — the comparison a benchmark-level claim about the new loss
-  ultimately rests on.
+- **Repeat the baseline comparison over more training seeds** (§10.7, §11.3). With one seed per
+  model, mIoU ties while every PLEM metric favours the joint loss on SpaceNet; two or three more
+  seeds per model would show whether that gap exceeds training variance.
 
 Further future work:
 

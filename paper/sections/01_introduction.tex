@@ -112,6 +112,12 @@ This paper makes eight contributions:
     under-detection, and \textbf{incomplete public building labels} (only 64\% of SpaceNet
     road-tile area has building ground truth). The final model reaches SpaceNet
     \texttt{cbhm\_soft} 0.685 and road-intersection F1 0.279.
+  \item \textbf{A matched conventional-training baseline}
+    (Sections~\ref{subsec:baseline-setup},~\ref{subsec:baseline-results}): the same pipeline
+    trained with cross-entropy + Dice and selected on mIoU. The two models tie on mIoU (0.570 vs.\
+    0.572) on SpaceNet, while every PLEM metric favours the joint loss, and the two kinds of metric
+    order tiles differently (opposite-sign differences on 30 of 83 tiles). This is direct evidence
+    that conventional metrics and PLEM's measure different things, not only that they could.
 \end{enumerate}
 
 The rest of the paper is organized as follows. Section~\ref{sec:related} places this work relative
