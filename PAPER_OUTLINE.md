@@ -62,11 +62,13 @@ vector road labels as the road class and predicted by an independent sigmoid hea
 test tiles and road-intersection F1 0.279 at a validation-calibrated threshold. Against a
 conventionally trained baseline (cross-entropy + Dice, selected on mIoU) on identical data, the two
 models tie on mIoU (0.570 vs. 0.572) while every PLEM metric favours the joint loss (`cbhm_soft`
-+0.038, intersection F1 0.279 vs. 0.218): a difference pixel IoU does not register. The path there is
-itself a finding: a point channel inside the segmentation softmax flooded predictions, an earlier
-tree/car point class proved unlearnable, the heatmap loss's negative-term normalization flipped
-the detector between 30× over-detection and almost none, and 36% of SpaceNet's road-tile area
-turned out to have no public building labels at all. Open items are collected in one place (§11).
++0.038, intersection F1 0.279 vs. 0.218): a difference pixel IoU does not register. We also report four lessons from the six development runs behind this model. A point
+channel placed inside the segmentation softmax took over road and building pixels. An earlier
+point class of trees and cars, from Potsdam, could not be learned at all. The way the heatmap loss
+normalizes its negative term swung the detector from predicting 30× too many intersections to
+predicting almost none, until its threshold was calibrated on validation tiles. Finally, 36% of
+the area of SpaceNet's road tiles has no public building labels, and had silently been trained
+and scored as "no building". Open items are collected in one place (§11).
 
 ### CCS Concepts
 
