@@ -37,7 +37,7 @@ over $\{\text{bg},\text{road},\text{building}\}$, \textbf{483,475 parameters}. 1
 split \textbf{70/15/15 at the tile level} (avoids patch-leakage inflating held-out scores),
 patchified to 256px (2520 train / 540 val patches). Loss $=$ class-weighted cross-entropy $+$ soft
 Dice; class weights $[0.1, 1.313, 1.602]$ for (bg, road, building), from pixel counts
-$[147742496, 9565097, 7843127]$. CPU-only, 15 epochs \cite{ronneberger2015unet}. This is the
+$147{,}742{,}496$, $9{,}565{,}097$ and $7{,}843{,}127$. CPU-only, 15 epochs \cite{ronneberger2015unet}. This is the
 frozen CE+Dice \textbf{baseline} referenced by Section~\ref{subsec:joint-setup}'s ablation.
 
 \textbf{Limitation stated explicitly here}: ``${\sim}100$ curated real tiles with no pretraining is
@@ -88,7 +88,7 @@ SpaceNet supplies road+building but no point class; Potsdam's 6-class palette in
 \texttt{building} and point-capable \texttt{tree}/\texttt{car} classes but no road/linear class at
 all. A genuinely joint 0D/1D/2D training run therefore requires combining both sources under
 \texttt{PLEMMultiTaskLoss}'s masked multi-source scheme. \textbf{The data-side half of this is
-built and validated against real data}: \texttt{datasets/potsdam.py::label\_raster\_to\_building\_mask}
+built and validated against real data}: \texttt{datasets/potsdam.py::\allowbreak{}label\_raster\_to\_building\_mask}
 extracts the \texttt{building} palette color (a straight threshold, deliberately not routed
 through the point pipeline's connected-component + area filter, which would wrongly split/drop
 large contiguous footprints) alongside the existing point extraction, combined by

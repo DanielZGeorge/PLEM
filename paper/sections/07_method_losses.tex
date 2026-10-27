@@ -27,7 +27,7 @@ make it differentiable.
 \begin{table*}
   \caption{Eval metric $\leftrightarrow$ differentiable loss term correspondence.}
   \label{tab:correspondence}
-  \begin{tabular}{@{}p{2.7cm}p{2.7cm}p{10.5cm}@{}}
+  \begin{tabular}{@{}>{\raggedright\arraybackslash}p{2.7cm}>{\raggedright\arraybackslash}p{2.7cm}>{\raggedright\arraybackslash}p{10.5cm}@{}}
     \toprule
     Eval metric & \texttt{losses/} term & What changed to make it differentiable \\
     \midrule
@@ -146,7 +146,7 @@ identical $4.77\times10^{-7}$} against a $3\times$-thicker (9px) prediction on t
 --- i.e., zero measurable width sensitivity up to a $3\times$ ratio --- while plain soft Dice on
 the same 9px input scores only $0.500$, confirming soft-clDice is doing something meaningfully
 different from plain Dice, not just numerically saturating
-(\texttt{tests/test\_losses\_sanity.py::TestSoftClDiceLoss::test\_width\_insensitivity}).
+(\texttt{tests/test\_losses\_sanity.py::\allowbreak{}TestSoftClDiceLoss::\allowbreak{}test\_width\_insensitivity}).
 
 \subsection{Point-Heatmap Regression Loss (Point F1 Analog, Reformulated)}
 \label{subsec:heatmap-loss}
@@ -165,15 +165,14 @@ supervision at all --- the first scaled run's failure, Section~\ref{subsec:scale
 point probability $p$ is trained against it with a penalty-reduced pixelwise focal loss
 (CornerNet/CenterNet formulation \cite{law2018cornernet,zhou2019centernet}):
 \begin{align}
-  \mathrm{gt\_heatmap}(x) &= \max_{c \in \mathrm{centroids}} \exp\left(-\frac{\|x-c\|^2}{2\sigma^2}\right),
-    \quad \text{stamped to 1 at } \mathrm{round}(c) \\
-  \mathrm{pos\_loss}(x) &= -(1-p(x))^\alpha \log p(x) \quad \text{if } \mathrm{gt\_heatmap}(x) = 1 \\
-  \mathrm{neg\_loss}(x) &= -(1-\mathrm{gt\_heatmap}(x))^\beta p(x)^\alpha \log(1-p(x)) \quad
-    \text{otherwise} \\
-  \mathrm{loss} &= \frac{\sum_x \mathrm{pos\_loss}(x)}{N_{\mathrm{pos}}}
-                 + \frac{\sum_x \mathrm{neg\_loss}(x)}{Z_{\mathrm{neg}}}
+  H(x) &= \max_{c \in \mathrm{centroids}} \exp\left(-\frac{\|x-c\|^2}{2\sigma^2}\right) \\
+  \ell^{+}(x) &= -(1-p(x))^\alpha \log p(x) \quad \text{if } H(x) = 1 \\
+  \ell^{-}(x) &= -(1-H(x))^\beta\, p(x)^\alpha \log(1-p(x)) \quad \text{otherwise} \\
+  \mathrm{loss} &= \frac{\sum_x \ell^{+}(x)}{N_{\mathrm{pos}}}
+                 + \frac{\sum_x \ell^{-}(x)}{Z_{\mathrm{neg}}}
 \end{align}
-with $N_{\mathrm{pos}} = \max(1, \#\text{peak pixels in the batch})$, counted only over samples
+where $H$ is the target heatmap, set to exactly 1 at each $\mathrm{round}(c)$, and
+$N_{\mathrm{pos}} = \max(1, \#\text{peak pixels in the batch})$, counted only over samples
 whose source annotates points. The negative normalizer $Z_{\mathrm{neg}}$ is a deliberate choice
 with large practical consequences (Section~\ref{subsec:scaled-results}):
 $Z_{\mathrm{neg}} = N_{\mathrm{pos}}$ is CenterNet's own normalizer, which prices a false-positive

@@ -34,6 +34,17 @@
 %% use \DeclareMathSymbol and merely warn on redeclaration), so a second
 %% load is a hard error, not just a harmless warning.
 \usepackage{graphicx}
+\usepackage{array}
+
+%% Long code identifiers (\texttt{...}) cannot be hyphenated, so in the two-column
+%% layout they push lines past the column edge. Allow a line break after every
+%% text-mode underscore, and let TeX loosen a line before it overflows.
+\makeatletter
+\DeclareRobustCommand{\_}{%
+  \ifmmode\nfss@text{\textunderscore}\else\textunderscore\allowbreak\fi}
+\makeatother
+\AtBeginDocument{\pdfstringdefDisableCommands{\def\_{\textunderscore}}}
+\setlength{\emergencystretch}{3em}
 
 %% Copyright/rights block -- placeholder values, fill in at submission time.
 \setcopyright{acmlicensed}

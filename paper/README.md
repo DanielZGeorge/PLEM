@@ -66,6 +66,20 @@ inline code identifiers in narrow single-column text, and a `Package balance War
 called \balance in second column` — the latter is acmart's own automatic end-of-document call for
 sigconf's two-column layout, not something this project's `.tex` files invoke.
 
+**Second compile-log pass (Oct 2026).** The undefined-citation errors came from a *stale
+`refs.bib` on Overleaf* (it matched commit `b335855`, before the Related Work citations), so
+re-upload every file, not just the sections. Fixed in the repo at the same time:
+- `refs.bib`: BibTeX parses `@` even inside `%%` comments, and a comment saying
+  `@misc (not @article)` (which also sat above the wrong entry) broke parsing. Comments in
+  `refs.bib` must never contain `@`. Csurka et al. listed "Meylan, France" (an affiliation) as an
+  author. Added the verified page ranges (clDice, Csurka, RoadTracer) and venue addresses; the
+  Sat2Graph page range is still left out because it couldn't be verified.
+- Overfull boxes: `main.tex` now makes the text-mode `\_` breakable and sets
+  `\emergencystretch=3em`; `::` in code paths is followed by `\allowbreak{}`; the tables use
+  ragged-right `p{}` columns (`array` package); the heatmap-loss display uses $H$/$\ell^\pm$
+  instead of long `\mathrm{gt\_heatmap}` names; one math-mode list of integers was rewritten as
+  text; the `\medskip` acmart warned about was removed.
+
 If you re-run a compile and hit something new, treat Overleaf's own log as ground truth and fix
 forward the same way — see `CLAUDE.md`'s `paper/` entry for how this round was resolved.
 

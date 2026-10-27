@@ -93,11 +93,10 @@ dropout axis does the blend actually diverge from plain DTAF1? --- has no closed
 answered numerically. Table~\ref{tab:breakage-topo} already gives the answer directly:
 \texttt{dtaf1\_topo} tracks \texttt{road\_apls} closely (both driven to near-zero by fraction
 0.5--0.7) while \texttt{dtaf1} stays at $1.000$ throughout --- this \emph{is} the fix, cross-checked
-against the assertions in \texttt{tests/test\_metrics\_sanity.py::TestRoadBreakageRegression}.
+against the assertions in \texttt{tests/test\_metrics\_sanity.py::\allowbreak{}TestRoadBreakageRegression}.
 \textbf{Validated on synthetic data only} --- see Section~\ref{sec:discussion} for the real-data
 caveat.
 
-\medskip
 \noindent\textbf{Bridge to Section~\ref{sec:method}.} Every property analyzed so far --- offset
 tolerance (Section~\ref{subsec:dtaf1}), width insensitivity (Section~\ref{subsec:cldice}),
 connectivity/breakage sensitivity (this section), instance-level point matching
