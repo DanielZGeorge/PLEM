@@ -116,6 +116,15 @@ tables only; add figures from that notebook if the paper needs them visually ill
 
 ## Source of truth
 
-This LaTeX project is a transcription of `PAPER_OUTLINE.md` (repo root) — if the two ever
-disagree, treat the code and `PAPER_OUTLINE.md` as authoritative (per `CLAUDE.md`) and update this
-LaTeX project to match, not the other way around.
+Since November 2026 this LaTeX project is the master copy of the paper. It started as a
+transcription of `PAPER_OUTLINE.md` (repo root), which is now frozen as a planning record and is
+no longer updated. Revise the paper here only. The code and the recorded results (`results/`,
+notebook outputs) remain the authority for any number or claim.
+
+## Revision notes
+
+The paper is being revised one section at a time (body first, then §2, then §1/§12/abstract,
+then appendices). Items found in one section that need a change elsewhere are listed here until
+that section's pass:
+
+- *(none yet)*

@@ -1,5 +1,8 @@
 # PLEM: Polygonal Linear Evaluation Metric
 
+> **Frozen (November 2026).** This outline is kept as a planning record and is no longer updated.
+> The paper's master copy is the LaTeX project in `paper/`; revise it there.
+
 *(working subtitle: Evaluation Metrics and a Differentiable Training Loss for Joint Point, Linear,*
 *and Polygonal Map Feature Extraction)*
 
