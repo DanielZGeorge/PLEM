@@ -12,7 +12,13 @@ paper/
   appendix/                 # appendix_a_proofs.tex, appendix_b_complexity.tex
   refs.bib                  # BibTeX entries for every \cite in the paper
   figures/                  # (empty for now — see "Figures" below)
+  skeleton.tex              # standalone outline: every section, label, table and figure, no body text
+  section_points.md         # the main points each section must make, in skeleton.tex's order
 ```
+
+`skeleton.tex` compiles by itself (choose it as the main document in Overleaf) and has exactly
+the same `\label`s as the full paper. Keep both outline files in step with `sections/` when a
+revision pass adds, removes or renames a subsection.
 
 ## `acmart.cls` is *not* vendored here
 
@@ -127,4 +133,7 @@ The paper is being revised one section at a time (body first, then §2, then §1
 then appendices). Items found in one section that need a change elsewhere are listed here until
 that section's pass:
 
-- *(none yet)*
+- §6.3 (`subsec:dtaf1topo`): the closed-form bullet says $2A/(1+A)$ is "always $\le$ APLS".
+  It is $\ge$ APLS on $[0,1]$ (e.g. $A=0.5$ gives $0.667$). The true property is that the blend
+  never exceeds F1 and is pulled toward the lower of the two. Fix in the §4–6 pass.
+- §2.2, §2.3 and §2.6 are still one-line stubs; they need real prose and citations.
