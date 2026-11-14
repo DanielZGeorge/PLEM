@@ -317,13 +317,7 @@ text.
 - **Predictions.** "Pred" is GT perturbed at fixed severities (offset, dropout, thickening,
   erosion, point jitter/dropout/clutter).
 
-### 9.3 First trained model
-- **Model.** 3-level U-Net, 483,475 parameters, softmax over bg/road/building.
-- **Data.** 100 tiles split 70/15/15 by tile.
-- **Training.** Class-weighted CE + Dice, 15 CPU epochs.
-- **Status.** A pipeline sanity check, not a benchmark.
-
-### 9.4 Loss ablation setup
+### 9.3 Loss ablation setup
 - **Scenes.** Same scenes and perturbations as §4.
 - **Measurement.** Loss value of a perturbed prediction against GT, encoded as moderately
   confident logits.
@@ -332,14 +326,14 @@ text.
 - **Confidence-scale note.** Full confidence saturates the focal log term. Its magnitude differs
   from the other terms, which motivates per-term weights.
 
-### 9.5 Joint multi-source setup (historical proof of concept)
-- **Point class.** Potsdam trees/cars inside the softmax; predates intersections.
-- **Data.** 153 tiles (123 SpaceNet + 30 Potsdam), split per source.
-- **No common GSD.** No GSD resampling (0.3–0.5 m vs 6 cm), stated as a limitation.
-- **Status.** A pipeline sanity check.
-
-### 9.6 Scaled production setup
+### 9.4 Production setup (old §9.3 and §9.5 folded in)
+- **Model.** `SmallUNet`, 3-level, 483,492 parameters; softmax over bg/road/building plus an
+  independent sigmoid intersection channel. Tile-level 70/15/15 split per source.
+- **Development path.** A 2-epoch CPU run showed the masked multi-source loss trains; the point
+  class moved from Potsdam trees/cars to intersections after run 4 (`tab:scaled-history`).
 - **Sources.**
+  - SpaceNet: roads, buildings, intersections. Potsdam: buildings. No common GSD (0.3–0.5 m vs
+    6 cm), stated as a limitation.
   - SpaceNet6 SAR is added, as pseudo-RGB. It is illumination-invariant: the real half of the
     night-robustness approach.
   - The synthetic half is low-light augmentation on 40% of patches.
@@ -361,7 +355,7 @@ text.
   - The point threshold is chosen on validation tiles only.
 - **Evaluation.** Per-source scoring on the annotated classes; a dark test at four severities.
 
-### 9.7 Conventional baseline setup
+### 9.5 Conventional baseline setup
 - **Held fixed:** everything except the loss and the selection rule.
 - **Loss.** CE+Dice (parity-tested identical) plus BCE (pos_weight capped at 100, raw ratio
   5,770) + Dice on 5×5 intersection squares. No geometric terms.
@@ -388,11 +382,7 @@ text.
   - clutter: precision falls to 0.13 at 20 spurious blobs;
   - jitter: about 0.38 at 6 px.
 
-### 10.3 First trained U-Net
-- **Scores.** `cbhm` 0.316, `cbhm_soft` 0.378, `dtaf1` 0.440 (15 tiles).
-- **Status.** Shows the library scores real model output sensibly; not a benchmark.
-
-### 10.4 Loss ablation results
+### 10.3 Loss ablation results
 - **Tolerance term.** Flat to 10 px of offset, then rises.
 - **clDice term.** Jumps by 2 px of offset. Matches CE+Dice up to a 4× width ratio, then
   diverges.
@@ -401,17 +391,9 @@ text.
   flat.
 - **Summary.** Every expected sensitivity moved, and every negative control stayed flat.
 
-### 10.5 Joint training results (proof of concept)
-- **Run.** 2 epochs.
-- **Loss terms** all decrease; the heatmap term drops 35×.
-- **Point F1** is computed end to end for the first time.
-- **Below the baseline.** SpaceNet `cbhm` 0.144 against the baseline's 0.316, but at 2 epochs
-  against 15, so it is not evidence about the loss.
-- **`Vegas_img425`.** CBHM is 0 while the tile looks good: `bf` = 0 while `dtaf1_weighted` is
-  0.902. This is the zero-collapse seen on real model output.
-
-### 10.6 Scaled production results
-- **Final model.** Run 6, best epoch 38. All loss terms decline.
+### 10.4 Production results
+- **Final model.** Run 6, best epoch 38. All loss terms decline (`fig:training-curves`, which also
+  shows the baseline: both end at validation mIoU ≈ 0.40).
 - **Table `tab:scaled-test`.** SpaceNet `cbhm_soft` 0.685, `dtaf1_topo` 0.482 against `dtaf1`
   0.771 (APLS sees fragmentation). Potsdam 0.568; SpaceNet6 0.350.
 - **Intersections.**
@@ -427,7 +409,7 @@ text.
 - **Development record (`tab:scaled-history`).** Six runs, one failure and fix each. A
   development record, not an ablation.
 
-### 10.7 Baseline vs joint loss
+### 10.5 Baseline vs joint loss
 - **Metric claim: supported.**
   - SpaceNet ΔmIoU is +0.002 (p = 0.64).
   - Every PLEM metric favours the joint loss with CIs excluding 0: `dtaf1` +0.069, clDice

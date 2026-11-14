@@ -201,7 +201,7 @@ with its own weight:
 
 \textbf{Multi-source class masking.} In the final pipeline, SpaceNet tiles annotate roads,
 buildings and road intersections, while Potsdam and SpaceNet6 tiles annotate buildings only (in
-the earlier run of Section~\ref{subsec:joint-setup}, Potsdam annotated buildings and points).
+early development runs, Potsdam annotated buildings and points; Section~\ref{subsec:scaled-setup}).
 Training one model on all sources jointly requires each sample to be supervised only on the classes
 its source annotates. For the softmax classes, we add a large negative bias to a sample's
 masked-out class channels before any softmax is taken:
@@ -214,7 +214,7 @@ contribution to every term at once. One mechanism serves all four loss terms, so
 own masking code. It relies on target label maps never containing a class id that the sample's
 source does not annotate, which holds by construction for the rasterizers in both
 \texttt{datasets/spacenet.py} and \texttt{datasets/potsdam.py}
-(Sections~\ref{subsec:realdata-setup},~\ref{subsec:joint-setup}). The same mechanism handles
+(Sections~\ref{subsec:realdata-setup},~\ref{subsec:scaled-setup}). The same mechanism handles
 unlabelled areas within a source. A SpaceNet training patch that touches any area without public
 building labels (Section~\ref{subsec:scaled-setup}) has building masked out for that patch, and any
 building pixels in it are relabelled as background, so unlabelled buildings are never taught as

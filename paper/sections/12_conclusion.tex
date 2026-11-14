@@ -13,9 +13,7 @@ topology and point-instance localization (the last a reformulation rather than a
 one multi-task loss, and a masked multi-source training scheme lets datasets that each annotate
 only some of the three feature types jointly supervise one model. The synthetic ablations of
 Section~\ref{subsec:lossablation-results} confirm that each term encodes the geometric sensitivity
-it was designed for. The small real run of Section~\ref{subsec:joint-results} shows all four terms
-learning together and gives a real-data example of why both CBHM's harsh composite and DTAF1's
-lenient one are needed. Section~\ref{subsec:scaled-results} carries the mechanism to a 1,033-tile,
+it was designed for. Section~\ref{subsec:scaled-results} trains it on a 1,033-tile,
 three-source production pipeline, whose final model reaches SpaceNet \texttt{cbhm\_soft} 0.685 and
 detects road intersections, the point feature derived from the same vector labels as the roads, at
 F1 0.279. Its six-run development record is a result in its own right. A point channel inside the

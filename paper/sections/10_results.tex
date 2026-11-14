@@ -34,31 +34,6 @@ computed directly with the library.
     synthetic sweep, which we attribute to real objects being packed closer together.
 \end{itemize}
 
-\subsection{Applied Pipeline: Trained U-Net Results (CE+Dice Baseline)}
-\label{subsec:unet-results}
-
-\begin{table}
-  \caption{Full test-set table (15 held-out tiles, mean $\pm$ std).}
-  \label{tab:unet-baseline}
-  \begin{tabular}{@{}lcc@{}}
-    \toprule
-    Metric & mean & std \\
-    \midrule
-    \texttt{cbhm} & 0.316 & 0.126 \\
-    \texttt{cbhm\_soft} & 0.378 & 0.130 \\
-    \texttt{dtaf1} & 0.440 & 0.134 \\
-    \texttt{dtaf1\_weighted} & 0.476 & 0.141 \\
-    \texttt{cldice\_mean} & 0.409 & 0.193 \\
-    \texttt{bf\_mean} & 0.308 & 0.156 \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-The best tile is \texttt{Shanghai\_img1375} ($\mathrm{cbhm}=0.617$) and the worst is
-\texttt{Shanghai\_img1711} ($\mathrm{cbhm}=0.163$). This is the first check that the library scores
-a real trained model's output sensibly, and the CE+Dice reference for
-Section~\ref{subsec:joint-results}.
-
 \subsection{Loss Ablation Results}
 \label{subsec:lossablation-results}
 
@@ -95,122 +70,28 @@ saturating.
 
 The module docstring of \texttt{tests/test\_loss\_sensitivity.py} holds the full numeric tables.
 
-\subsection{Joint Multi-Source Training Results}
-\label{subsec:joint-results}
-
-The setup of Section~\ref{subsec:joint-setup} ran to completion in
-\texttt{notebooks/train\_unet\_joint.ipynb}. It loaded 153 cached tiles (123 SpaceNet and 30
-Potsdam), split them 70/15/15 per source (SpaceNet 86/18/19 train/val/test, Potsdam 21/4/5) and cut
-them into 3117 training and 652 validation patches. Potsdam patches are rare, 21 of 3117
-(${\approx}0.7\%$), since each Potsdam crop is already patch-sized while a SpaceNet tile gives 36
-patches, but a printout of the source mix confirmed both reach training (batches 0--2 held 16/0,
-16/0 and 15/1 SpaceNet/Potsdam patches). Training ran for 2 epochs against the baseline's 15, to
-keep this CPU-only run short.
-
-\begin{table}
-  \caption{Joint training: per-epoch total and sub-term losses.}
-  \label{tab:joint-training}
-  \begin{tabular}{@{}cccccc@{}}
-    \toprule
-    Epoch & train\_loss & val\_loss & ce\_dice & tolerance & cldice \\
-    \midrule
-    1 & 3.3824 & 2.8458 & 1.5427 & 0.5896 & 0.9038 \\
-    2 & 2.6823 & 2.5957 & 1.2497 & 0.5509 & 0.8718 \\
-    \bottomrule
-  \end{tabular}
-  \par\vspace{2pt}
-  {\footnotesize heatmap: $0.3461 \to 0.0098$ (shown separately in Figure~\ref{fig:joint-subterms}
-  for scale).\par}
-\end{table}
-
-\begin{figure}
-  \includegraphics[width=\linewidth]{figures/joint_training_subterm_curves.png}
-  \Description{Line chart of four per-term training loss curves (ce\_dice, tolerance, cldice,
-  heatmap) over 2 epochs. All four lines slope downward; the heatmap curve drops most steeply,
-  from about 0.35 to about 0.01.}
-  \caption{Per-term training loss over 2 epochs. All four sub-terms decrease, and
-  \texttt{heatmap} drops most sharply (a $35\times$ reduction).}
-  \label{fig:joint-subterms}
-\end{figure}
-
-All four sub-terms and the total decreased (Figure~\ref{fig:joint-subterms}). The $35\times$ drop
-in \texttt{heatmap} is consistent with the model quickly learning to predict a near-zero point
-probability almost everywhere, since points are sparse even within Potsdam patches.
-
-\begin{table}
-  \caption{Joint model test-set evaluation, split by source, via \texttt{evaluate\_all()} with
-  \texttt{point\_classes=[3]} and a 4-class \texttt{dtaf1\_config}.}
-  \label{tab:joint-test}
-  \begin{tabular}{@{}lcc@{}}
-    \toprule
-    Metric & SpaceNet-only ($n{=}19$) & Potsdam-only ($n{=}5$) \\
-    \midrule
-    \texttt{cbhm} & $0.144 \pm 0.115$ & $0.000 \pm 0.000$ \\
-    \texttt{cbhm\_soft} & $0.230 \pm 0.119$ & $0.078 \pm 0.159$ \\
-    \texttt{dtaf1} & $0.304 \pm 0.157$ & $0.092 \pm 0.149$ \\
-    \texttt{dtaf1\_weighted} & $0.371 \pm 0.212$ & $0.076 \pm 0.158$ \\
-    \texttt{cldice\_mean} & $0.173 \pm 0.141$ & $0.000 \pm 0.000$ \\
-    \texttt{bf\_mean} & $0.252 \pm 0.151$ & $0.078 \pm 0.159$ \\
-    \texttt{point\_f1\_mean} & --- & $0.200 \pm 0.447$ \\
-    \bottomrule
-  \end{tabular}
-\end{table}
-
-\texttt{point\_f1\_mean} has a value for all 5 real stitched Potsdam test tiles
-($[0.0, 0.0, 0.0, 1.0, 0.0]$), the first time the \texttt{point\_classes} argument of
-\texttt{evaluate\_all()} was exercised end to end on a real trained model's output.
-
-\textbf{Baseline comparison.} The per-tile results of the baseline
-(\texttt{data/train\_unet\_test\_results.csv}) were not preserved; only its aggregate survives
-(Table~\ref{tab:unet-baseline}: \texttt{cbhm} $0.316\pm0.126$ and \texttt{dtaf1}
-$0.440\pm0.134$ for a 15-epoch, SpaceNet-only 3-class model). A tile-matched comparison was
-therefore not possible, only a directional one against those aggregates. The joint run's
-SpaceNet \texttt{cbhm} ($0.144$) and \texttt{dtaf1} ($0.304$) are both lower than the baseline's.
-We do not read this as evidence that the new loss underperforms: this run trained for 2 epochs
-against the baseline's 15, on a larger effective task, with a 4-class head absorbing gradient from
-four loss terms, one of them fed by a source (Potsdam) that contributes under 1\% of training
-patches. No epoch-matched comparison has been run.
-
-\begin{figure}
-  \includegraphics[width=\linewidth]{figures/joint_qualitative_panels.png}
-  \Description{Four rows of three panels each (RGB image with GT overlay, RGB image with
-  prediction overlay, raw prediction mask), one row per test tile, ordered worst to best by cbhm
-  score: Vegas\_img425, Paris\_img449, Paris\_img250, Vegas\_img997. Roads are overlaid in red,
-  buildings in green.}
-  \caption{Qualitative review of test tiles from worst to best by \texttt{cbhm} (GT / prediction /
-  raw prediction mask; red$=$road, green$=$building). \texttt{Vegas\_img425} (top row, worst by
-  \texttt{cbhm}) is visually one of the better predictions; the text explains why its score is
-  still exactly 0. \texttt{Paris\_img449} and \texttt{Paris\_img250} over-predict road across open
-  terrain with no ground-truth road, consistent with an underfit 2-epoch model.}
-  \label{fig:joint-qualitative}
-\end{figure}
-
-\textbf{Qualitative review} (Figure~\ref{fig:joint-qualitative}, tiles from worst to best by
-\texttt{cbhm}). Quality is mixed, as expected after 2 epochs, and one real-data finding stands out.
-The worst tile by \texttt{cbhm} (\texttt{Vegas\_img425}, $\mathrm{cbhm}=0.000$) is visually one of
-the better predictions in the panel, with recognizable road centerlines and building footprints
-roughly aligned with the ground truth. The per-metric breakdown explains this and repeats on real
-data the harsh-versus-lenient story of Section~\ref{subsec:cbhm}: $\mathrm{bf\_mean}=0.000$ exactly,
-because building boundary F1 at a 2px tolerance collapsed completely, while
-$\mathrm{dtaf1\_weighted}=0.902$ and $\mathrm{cldice\_mean}=0.474$ are both high. This is the first
-time we saw this zero collapse (Appendix~\ref{app:a3}) on a real model's output rather than on
-synthetic scenes (Table~\ref{tab:failure-modes}) or perturbed ground truth
-(Section~\ref{subsec:realdata-results}). The best tile shown
-(\texttt{Vegas\_img997}, $\mathrm{cbhm}=0.364$) has a more balanced profile
-($\mathrm{dtaf1}=0.402$, $\mathrm{cldice\_mean}=0.336$, $\mathrm{bf\_mean}=0.397$), with no single
-class collapsing and both road and building partly recovered. The two weakest-looking predictions
-(\texttt{Paris\_img449} and \texttt{Paris\_img250}) over-predict the road class across open and
-agricultural terrain that has no ground-truth road, which fits an underfit model. No panel showed
-point-class predictions on a SpaceNet tile, which would indicate a leaking \texttt{class\_mask}.
-
-\subsection{Scaled Production Training Results}
+\subsection{Production Training Results}
 \label{subsec:scaled-results}
 
+\begin{figure*}
+  \includegraphics[width=\textwidth]{figures/training_curves.png}
+  \Description{Five small line charts against epoch (1 to 40). The first four show the joint
+  model's training sub-terms falling steadily: CE+Dice from 1.07 to 0.74, tolerance from 0.41 to
+  0.28, soft-clDice from 0.73 to 0.56 and heatmap from 4.49 to 3.51. The CE+Dice panel also shows
+  the conventional model's CE+Dice as a dashed orange line that tracks the joint model closely. The
+  fifth panel shows validation mIoU for both models rising from about 0.27 to about 0.40, with the
+  two lines nearly on top of each other.}
+  \caption{Training curves of the production joint model (solid) and the conventional baseline
+  (dashed, Section~\ref{subsec:baseline-setup}); dots mark each model's selected checkpoint (epoch
+  38 by validation loss, epoch 36 by validation mIoU). Every term of the joint loss declines over
+  all 40 epochs, and the two models end at the same validation mIoU (0.400 against 0.403).}
+  \label{fig:training-curves}
+\end{figure*}
+
 \textbf{Final model.} The final model is run 6, with its best checkpoint at epoch 38 of 40 and a
-validation-calibrated point threshold. All loss components decline over the full 40 epochs (on
-training data, \texttt{ce\_dice} $1.074 \to 0.740$, \texttt{tolerance} $0.408 \to 0.278$,
-\texttt{cldice} $0.733 \to 0.560$ and \texttt{heatmap} $4.494 \to 3.511$; the validation selection
-loss falls from $6.017$ to a best of $4.349$).
+validation-calibrated point threshold. Every loss term declines over the full 40 epochs
+(Figure~\ref{fig:training-curves}), and the validation selection loss falls from $6.017$ to a best
+of $4.349$.
 
 \begin{table*}
   \caption{Production model, test-set means per source; each tile scored only on the classes its
@@ -270,12 +151,9 @@ class, so nothing in training says those pixels are not road.
 0.568/0.543/0.528/0.481, SpaceNet6 0.350/0.330/0.331/0.328 (radar, unaffected by design) and
 road-intersection F1 0.279/0.209/0.193/0.071. Points degrade faster than buildings or roads.
 
-\textbf{Development record.} The final configuration is the sixth full 40-epoch run of this
-pipeline. Each earlier run failed in one specific way that we could diagnose
-(Table~\ref{tab:scaled-history}). We report them because each failure mode applies generally to
-multi-task, multi-source training with a point head, and each fix is now covered by a regression
-test. Consecutive runs changed more than one setting, so the table is a development record and not
-an ablation.
+\textbf{Development record.} Each of runs 1--5 failed in one specific, diagnosable way, and each
+fix is now covered by a regression test (Table~\ref{tab:scaled-history}). Consecutive runs changed
+more than one setting, so the table is a development record, not an ablation.
 
 \begin{table*}
   \caption{Development record of the production pipeline. $^\dagger$Run 1's evaluation outputs were

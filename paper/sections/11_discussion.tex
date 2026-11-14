@@ -72,7 +72,7 @@
     batch for minutes. Real tiles carry at most a few dozen intersections per 256\,px patch, so the
     cap has no effect on real data.
   \item SpaceNet, Potsdam and SpaceNet6 are not resampled to a common ground sample distance
-    (Sections~\ref{subsec:joint-setup},~\ref{subsec:scaled-setup}), so a Potsdam or SpaceNet6
+    (Section~\ref{subsec:scaled-setup}), so a Potsdam or SpaceNet6
     training patch covers a different physical area than a SpaceNet patch of the same pixel size.
     We saw no obvious failure from this, but no ablation isolates it.
 \end{itemize}
@@ -80,19 +80,13 @@
 \subsection{Validation-Scope Limitations}
 
 \begin{itemize}
-  \item The CE+Dice baseline (Sections~\ref{subsec:trainedmodel-setup},~\ref{subsec:unet-results})
-    is trained on CPU on ${\sim}100$ curated real tiles with no pretraining. It is a real
-    end-to-end validation of the metric library, but the dataset is too small for its numbers to
-    be read as a segmentation benchmark.
   \item \textbf{The matched baseline comparison rests on one seed per model}
     (Section~\ref{subsec:baseline-results}). Its paired confidence intervals cover variation across
     test tiles only. The SpaceNet PLEM-metric gaps ($+0.02$ to $+0.07$) are small enough that
     variance across training seeds could account for part of them, and the intersection-F1 gain
     ($p = 0.015$) does not survive a correction for multiple comparisons. The baseline also
     reflects choices a reader could make differently: mIoU selection, connected-component decoding
-    and a BCE positive weight capped at 100. For this question, Section~\ref{subsec:baseline-results}
-    supersedes the small-scale runs of Sections~\ref{subsec:unet-results}
-    and~\ref{subsec:joint-results} (15 against 2 epochs, on different tasks).
+    and a BCE positive weight capped at 100.
   \item \textbf{Point-head history.} Runs 1--5 of Table~\ref{tab:scaled-history} each failed on
     the point feature in a different way. Every root cause is fixed in code and covered by a
     regression test, but the current model's point recall (0.194 on test) is still limited.

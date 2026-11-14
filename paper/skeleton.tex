@@ -279,21 +279,13 @@ point/keypoint detection, soft-skeletonization}
 \label{subsec:realdata-setup}
 \tbd{}
 
-\subsection{Trained Model (First Real Prediction Source)}
-\label{subsec:trainedmodel-setup}
-\tbd{}
-
 \subsection{Loss Ablation Setup}
 \label{subsec:lossablation-setup}
 \tbd{}
 
-\subsection{Joint Multi-Source Training Setup}
-\label{subsec:joint-setup}
-\tbd{}
-
-\subsection{Scaled Production Training Setup}
+\subsection{Production Training Setup}
 \label{subsec:scaled-setup}
-\tbd{Sources; road-intersection labels; building labels and coverage mask; training and
+\tbd{Model; development path; sources; road-intersection labels; building labels and coverage mask; training and
 evaluation.}
 
 \subsection{Conventional-Training Baseline Setup}
@@ -312,54 +304,19 @@ evaluation.}
 \label{subsec:realdata-results}
 \tbd{}
 
-\subsection{Applied Pipeline: Trained U-Net Results (CE+Dice Baseline)}
-\label{subsec:unet-results}
-
-\begin{table}
-  \caption{Full test-set table (15 held-out tiles, mean $\pm$ std).}
-  \label{tab:unet-baseline}
-  %% Columns: Metric | mean | std
-\end{table}
-
-\tbd{}
-
 \subsection{Loss Ablation Results}
 \label{subsec:lossablation-results}
 \tbd{}
 
-\subsection{Joint Multi-Source Training Results}
-\label{subsec:joint-results}
-
-\begin{table}
-  \caption{Joint training: per-epoch total and sub-term losses.}
-  \label{tab:joint-training}
-  %% Columns: Epoch | train_loss | val_loss | ce_dice | tolerance | cldice
-\end{table}
-
-\begin{figure}
-  \includegraphics[width=\linewidth]{figures/joint_training_subterm_curves.png}
-  \Description{Per-term training loss curves over two epochs.}
-  \caption{Per-term training loss over 2 epochs.}
-  \label{fig:joint-subterms}
-\end{figure}
-
-\begin{table}
-  \caption{Joint model test-set evaluation, split by source.}
-  \label{tab:joint-test}
-  %% Columns: Metric | SpaceNet-only | Potsdam-only
-\end{table}
-
-\begin{figure}
-  \includegraphics[width=\linewidth]{figures/joint_qualitative_panels.png}
-  \Description{Qualitative panels for four test tiles, worst to best by cbhm.}
-  \caption{Qualitative review, worst$\to$best \texttt{cbhm} test tiles.}
-  \label{fig:joint-qualitative}
-\end{figure}
-
-\tbd{}
-
-\subsection{Scaled Production Training Results}
+\subsection{Production Training Results}
 \label{subsec:scaled-results}
+
+\begin{figure*}
+  \includegraphics[width=\textwidth]{figures/training_curves.png}
+  \Description{Training curves of the joint and conventional models over 40 epochs.}
+  \caption{Training curves, joint loss vs.\ conventional baseline.}
+  \label{fig:training-curves}
+\end{figure*}
 
 \begin{table*}
   \caption{Production model, test-set means per source.}

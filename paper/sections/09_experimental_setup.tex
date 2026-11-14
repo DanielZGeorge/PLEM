@@ -29,22 +29,6 @@ $\in\{0,4,8,12,16\}$px, \texttt{road\_dropout}$\in\{0,25,50,75\}\%$,
 \texttt{point\_jitter}$\in\{0,3,6,10,15\}$px, \texttt{point\_dropout}$\in\{0,25,50,75,100\}\%$ and
 \texttt{point\_clutter}$\in\{0,5,10,15,20\}$ extra blobs.
 
-\subsection{Trained Model (First Real Prediction Source)}
-\label{subsec:trainedmodel-setup}
-
-The first trained model is a small U-Net \cite{ronneberger2015unet} with a 3-level
-encoder/decoder, a base of 16 channels doubling per level, a single softmax head over
-$\{\text{bg},\text{road},\text{building}\}$ and 483,475 parameters. We split 100 SpaceNet tiles
-70/15/15 at the tile level, so that adjacent patches cannot leak across the split and inflate
-held-out scores, and cut them into 256px patches (2520 train and 540 validation patches). The loss
-is class-weighted cross-entropy plus soft Dice, with class weights $[0.1, 1.313, 1.602]$ for (bg,
-road, building) derived from pixel counts of $147{,}742{,}496$, $9{,}565{,}097$ and
-$7{,}843{,}127$. It trains on CPU for 15 epochs. This is the frozen CE+Dice baseline that the
-ablation of Section~\ref{subsec:joint-setup} refers to.
-
-About 100 curated real tiles with no pretraining is a small dataset for segmentation, so we treat
-this model as a check that the pipeline works end to end, not as a benchmark.
-
 \subsection{Loss Ablation Setup}
 \label{subsec:lossablation-setup}
 
@@ -74,54 +58,37 @@ real training: the heatmap term is a CornerNet-style focal loss rather than a ra
 $[0,1]$ like the tolerance and clDice terms, so its magnitude scales differently, which is why
 \texttt{PLEMMultiTaskLoss} has a per-term \texttt{weights} dict.
 
-\subsection{Joint Multi-Source Training Setup}
-\label{subsec:joint-setup}
-
-\emph{This small run predates the switch to road intersections, and its point class is Potsdam's
-tree and car blobs inside the softmax. We keep it as the proof of concept that
-Section~\ref{subsec:scaled-setup} scales up.}
-
-Neither SpaceNet nor Potsdam alone annotates all three feature types
-(Section~\ref{subsec:multitask-loss}). SpaceNet supplies roads and buildings but no point class,
-while Potsdam's 6-class palette includes \texttt{building} and the point-capable \texttt{tree} and
-\texttt{car} classes but no road or other linear class. A joint 0D/1D/2D training run therefore has
-to combine both sources under the masked multi-source scheme of \texttt{PLEMMultiTaskLoss}.
-\texttt{datasets/potsdam.py} extracts the \texttt{building} palette color by a straight threshold,
-not through the point pipeline's connected-component and area filter, which would split or drop
-large footprints, and combines it with the existing point extraction. Of the 15 cached Potsdam
-crops, 14 have building coverage, 5 have point instances and 3 have both. \texttt{datasets/joint.py}
-then loads and tags every cached tile from both
-sources, with \texttt{SOURCE\_CLASSES = \{"spacenet": [1,2], "potsdam": [2,3]\}} and
-\texttt{class\_mask\_for\_source()} returning the $(4,)$ mask that \texttt{PLEMMultiTaskLoss}
-consumes directly. On the real caches this gives 123 SpaceNet tiles and 30 Potsdam tiles, 153
-tagged tiles in all, split 70/15/15 at the tile level separately for each source before
-concatenation, since a single pooled and permuted split could leave the smaller Potsdam side, with
-only 15 crops, out of a split entirely.
-
-SpaceNet and Potsdam are not resampled to a common ground sample distance (${\sim}0.3$--$0.5$ m/px
-for SpaceNet against 6 cm/px for Potsdam). Each source is cut independently into the same
-$256\times256$ pixel patches, so a Potsdam patch covers a much smaller physical area than a
-SpaceNet patch, which we list as a known limitation (Section~\ref{sec:discussion}). The resulting
-model is evaluated with \texttt{evaluate\_all(..., point\_classes=[3])}, the first end-to-end use of
-the \texttt{point\_classes} argument on a real trained model's output, and compared with the frozen
-CE+Dice baseline of Section~\ref{subsec:trainedmodel-setup} on the SpaceNet classes and tiles they
-share.
-
-\subsection{Scaled Production Training Setup}
+\subsection{Production Training Setup}
 \label{subsec:scaled-setup}
 
-This pipeline scales the run of Section~\ref{subsec:joint-setup} up to three sources and 1,033
-tiles, adds robustness to low light, and is where the final point feature was settled.
+No single public dataset annotates all three feature types, so one model is trained on several
+sources at once under the per-source class masking of Section~\ref{subsec:multitask-loss}.
 
-\textbf{Sources.} A third source, SpaceNet6, provides Capella Space SAR imagery over Rotterdam with
-building-footprint labels only. We convert it to a pseudo-RGB image by percentile-clip
+\textbf{Model.} A small U-Net \cite{ronneberger2015unet}, \texttt{SmallUNet}, with a 3-level
+encoder/decoder, a base of 16 channels doubling per level and 483,492 parameters. Channels 0--2
+form a softmax over background, road and building; channel 3 is an independent sigmoid
+intersection head. Tiles are split 70/15/15 at the tile level, separately for each source, so that
+adjacent patches cannot leak across the split, and cut into $256\times256$ patches.
+
+\textbf{Development path.} A 2-epoch CPU run on SpaceNet and Potsdam first confirmed that the masked
+multi-source loss trains, with all four sub-terms decreasing. The pipeline below then went through
+six GPU runs of up to 40 epochs. The point class started as Potsdam trees and cars inside the softmax and
+became road intersections on a separate head after run 4; Table~\ref{tab:scaled-history} lists the
+failure and fix behind each change.
+
+\textbf{Sources.} SpaceNet (Section~\ref{subsec:realdata-setup}) supplies roads, buildings and,
+from its road vectors, intersections. Potsdam supplies buildings only. SpaceNet6 provides Capella
+Space SAR imagery over Rotterdam, also with building-footprint labels only. We convert it to a pseudo-RGB image by percentile-clip
 normalization, so it passes through the unmodified 3-channel \texttt{SmallUNet}. SAR is an active
 sensor and looks the same day or night, which makes it the real, illumination-invariant half of a
 two-part approach to night robustness. The synthetic half is a low-light simulation (gamma
 darkening, brightness, contrast and saturation jitter, CLAHE and sensor-noise injection) applied to
-a random 40\% of training patches from every source. Larger per-source samples give 1,033 tiles
+a random 40\% of training patches from every source. The sample has 1,033 tiles
 (550 SpaceNet, 200 Potsdam and 283 SpaceNet6), split 70/15/15 separately for each source into 723
-training, 154 validation and 156 test tiles. The final configuration is
+training, 154 validation and 156 test tiles. The sources are not resampled to a common ground
+sample distance (${\sim}0.3$--$0.5$\,m/px for SpaceNet against 6\,cm/px for Potsdam), so a Potsdam patch
+covers a much smaller area than a SpaceNet patch of the same size (Section~\ref{sec:discussion}).
+The final configuration is
 \texttt{SOURCE\_CLASSES = \{"spacenet": [1,2,3], "potsdam": [2], "spacenet6": [2]\}}.
 
 \textbf{Point labels: road intersections.} \texttt{datasets/intersections.py} derives

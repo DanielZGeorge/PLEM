@@ -100,20 +100,15 @@ forward the same way — see `CLAUDE.md`'s `paper/` entry for how this round was
 
 ## Figures
 
-`figures/` currently has two PNGs extracted from `notebooks/train_unet_joint.ipynb`'s executed
-output (`joint_training_subterm_curves.png`, `joint_qualitative_panels.png`), both referenced from
-`sections/10_results.tex` §10.5 via `\includegraphics`. `notebooks/loss_ablation.ipynb`'s synthetic
-ablation figures are not yet exported here — Section 10.4 currently reports its numbers as prose/
-tables only; add figures from that notebook if the paper needs them visually illustrated too.
+`figures/training_curves.png` (Figure 1, §10.4 Production Training Results) is drawn from the
+tracked `results/scaled/plem_history.csv` and `baseline_history.csv`. The two older PNGs from
+`notebooks/train_unet_joint.ipynb` (2-epoch loss curves and qualitative panels without points)
+were removed in November 2026 together with the old §10.3/§10.5, on review: the paper now keeps
+only the matched baseline comparison. A production-model qualitative figure with intersections
+(baseline vs. joint) is planned and needs test imagery from CARC's `data/`.
 
 ## Placeholder content still to fill in
 
-- `sections/10_results.tex`, §10.5 (`\label{subsec:joint-results}`) is now filled in with real
-  numbers from an executed run of `notebooks/train_unet_joint.ipynb` (153 tiles, 2 epochs,
-  per-term loss curves, test-set scores by source, two embedded figures). What's still open there:
-  an **epoch-matched comparison** against the CE+Dice baseline has not been run — the current
-  §10.5 numbers cannot separate "the new loss underperforms" from "2 epochs on a harder task
-  underperforms," flagged explicitly in §11/§12 as the highest-priority follow-up.
 - Front-matter placeholders that need real values before submission: `\acmDOI`, `\acmISBN` in
   `main.tex` (currently `XXXXXXX` placeholders, standard practice until a DOI is assigned), and
   the reference/citation entries in `refs.bib` that use `@misc` with a generic `howpublished`
