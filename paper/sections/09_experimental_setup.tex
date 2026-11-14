@@ -4,199 +4,193 @@
 \subsection{Synthetic Benchmark}
 \label{subsec:synthetic-setup}
 
-$128\times128$ scene: vertical road stripe (class 1) + $40\times40$ building rectangle (class 2),
-from \texttt{notebooks/metric\_comparison.ipynb}. The nine sweep functions listed in
-Table~\ref{tab:sweeps} (\texttt{tests/test\_sensitivity.py}).
+The synthetic benchmark is the $128\times128$ scene from \texttt{notebooks/metric\_comparison.ipynb},
+a vertical road stripe (class 1) and a $40\times40$ building rectangle (class 2), perturbed by the
+nine sweep functions of \texttt{tests/test\_sensitivity.py} listed in Table~\ref{tab:sweeps}.
 
 \subsection{Real-Data Sample}
 \label{subsec:realdata-setup}
 
-SpaceNet SN2 (buildings, $650\times650$px) + SN3 (roads, $1300\times1300$px) from the public
-unauthenticated S3 bucket, cities Vegas/Khartoum/Paris/Shanghai, up to ${\sim}100$ tiles curated.
-A 1300px road tile spans a $2\times2$ block of 650px building tiles. This curated sample
-reconciled the two tiling grids with a coarse-then-dense nearest-neighbor search over tile ids;
-the production pipeline (Section~\ref{subsec:scaled-setup}) replaced it with an exact index of
-every building tile's extent after finding that the approximate search silently missed
-overlapping tiles. Plus ISPRS Potsdam (6cm/px) \cite{isprs-potsdam} for the point
-class (trees), 15 crops via a Kaggle mirror, thresholded by palette color + connected-component
-labeled.
+The real-data sample combines SpaceNet SN2 (buildings, $650\times650$px) and SN3 (roads,
+$1300\times1300$px) tiles from the public, unauthenticated S3 bucket, curated to up to
+${\sim}100$ tiles over Vegas, Khartoum, Paris and Shanghai. A 1300px road tile spans a $2\times2$
+block of 650px building tiles. This curated sample reconciled the two tiling grids with a
+coarse-then-dense nearest-neighbor search over tile ids. The production pipeline
+(Section~\ref{subsec:scaled-setup}) replaced that search with an exact index of every building
+tile's extent, after we found that the approximate search silently missed overlapping tiles. For
+the point class (trees) we added 15 crops of ISPRS Potsdam (6cm/px) \cite{isprs-potsdam} from a
+Kaggle mirror, thresholded by palette color and labeled by connected components.
 
-No trained extractor was available for most of this evaluation, so ``pred'' $=$ real GT run
-through the same perturbation families as the synthetic sweeps
-(\texttt{notebooks/real\_data\_evaluation.ipynb}), at fixed severities: \texttt{road\_offset}
+No trained extractor was available for most of this evaluation, so the ``prediction'' is real
+ground truth run through the same perturbation families as the synthetic sweeps
+(\texttt{notebooks/real\_data\_evaluation.ipynb}) at fixed severities: \texttt{road\_offset}
 $\in\{0,4,8,12,16\}$px, \texttt{road\_dropout}$\in\{0,25,50,75\}\%$,
 \texttt{road\_thicken}$\in\{0,2,4,6\}$px, \texttt{building\_erode}$\in\{0,1,2,3\}$px,
-\texttt{point\_jitter}$\in\{0,3,6,10,15\}$px, \texttt{point\_dropout}$\in\{0,25,50,75,100\}\%$,
+\texttt{point\_jitter}$\in\{0,3,6,10,15\}$px, \texttt{point\_dropout}$\in\{0,25,50,75,100\}\%$ and
 \texttt{point\_clutter}$\in\{0,5,10,15,20\}$ extra blobs.
 
 \subsection{Trained Model (First Real Prediction Source)}
 \label{subsec:trainedmodel-setup}
 
-Small 3-level encoder/decoder U-Net, base$=16$ channels doubling per level, single softmax head
-over $\{\text{bg},\text{road},\text{building}\}$, \textbf{483,475 parameters}. 100 SpaceNet tiles
-split \textbf{70/15/15 at the tile level} (avoids patch-leakage inflating held-out scores),
-patchified to 256px (2520 train / 540 val patches). Loss $=$ class-weighted cross-entropy $+$ soft
-Dice; class weights $[0.1, 1.313, 1.602]$ for (bg, road, building), from pixel counts
-$147{,}742{,}496$, $9{,}565{,}097$ and $7{,}843{,}127$. CPU-only, 15 epochs \cite{ronneberger2015unet}. This is the
-frozen CE+Dice \textbf{baseline} referenced by Section~\ref{subsec:joint-setup}'s ablation.
+The first trained model is a small U-Net \cite{ronneberger2015unet} with a 3-level
+encoder/decoder, a base of 16 channels doubling per level, a single softmax head over
+$\{\text{bg},\text{road},\text{building}\}$ and 483,475 parameters. We split 100 SpaceNet tiles
+70/15/15 at the tile level, so that adjacent patches cannot leak across the split and inflate
+held-out scores, and cut them into 256px patches (2520 train and 540 validation patches). The loss
+is class-weighted cross-entropy plus soft Dice, with class weights $[0.1, 1.313, 1.602]$ for (bg,
+road, building) derived from pixel counts of $147{,}742{,}496$, $9{,}565{,}097$ and
+$7{,}843{,}127$. It trains on CPU for 15 epochs. This is the frozen CE+Dice baseline that the
+ablation of Section~\ref{subsec:joint-setup} refers to.
 
-\textbf{Limitation stated explicitly here}: ``${\sim}100$ curated real tiles with no pretraining is
-a small dataset for segmentation; treat as a pipeline sanity check, not a benchmark result.''
+About 100 curated real tiles with no pretraining is a small dataset for segmentation, so we treat
+this model as a check that the pipeline works end to end, not as a benchmark.
 
 \subsection{Loss Ablation Setup}
 \label{subsec:lossablation-setup}
 
-Mirrors Section~\ref{subsec:motivation-setup}'s synthetic-sweep methodology exactly:
-\texttt{tests/test\_loss\_sensitivity.py} imports the same scene builders and perturbed-scene
-generators directly from \texttt{tests/test\_sensitivity.py} (\texttt{SHAPE}, \texttt{make\_road},
-\texttt{make\_building}, \texttt{make\_gt}, \texttt{make\_points}, \texttt{GT},
-\texttt{POINT\_COORDS} --- not duplicated), so every loss-side sweep perturbs the \emph{identical}
-synthetic scene as its eval-metric counterpart. Rather than accuracy, each sweep records
-\textbf{loss value} for a perturbed prediction against the fixed ground truth, encoded as
-``confidently peaked'' logits (softmax $\approx$ one-hot at the perturbed label, but at a
-moderate confidence scale) fed through \texttt{PLEMMultiTaskLoss}, reporting five configurations
-built from its own sub-term breakdown: \texttt{ce\_dice\_only}, \texttt{plus\_tolerance},
-\texttt{plus\_cldice}, \texttt{plus\_heatmap}, \texttt{full}. Seven sweeps mirror seven of the
-nine synthetic families (road offset/breakage/thickness, building erosion, point
-jitter/dropout/clutter --- \texttt{sweep\_class\_imbalance}/\texttt{sweep\_sparse\_class\_offset}
-have no loss-side analog, since they are about how eval-time composite \emph{reductions} behave,
-not a property of one loss term).
+The loss ablation follows the synthetic-sweep method of Section~\ref{subsec:motivation-setup}
+exactly. \texttt{tests/test\_loss\_sensitivity.py} imports its scene builders and perturbation
+functions from \texttt{tests/test\_sensitivity.py}, so every loss-side sweep perturbs the same
+synthetic scene as its evaluation counterpart. Each sweep records the loss value, not an accuracy,
+for a perturbed prediction against the fixed ground truth. The prediction is encoded as
+confidently peaked logits (softmax close to one-hot at the perturbed label, at a moderate
+confidence scale) and passed through \texttt{PLEMMultiTaskLoss}, and the sweep reports five
+configurations built from its sub-terms: \texttt{ce\_dice\_only}, \texttt{plus\_tolerance},
+\texttt{plus\_cldice}, \texttt{plus\_heatmap} and \texttt{full}. Seven sweeps mirror seven of the
+nine synthetic families: road offset, breakage and thickness, building erosion, and point jitter,
+dropout and clutter. \texttt{sweep\_class\_imbalance} and \texttt{sweep\_sparse\_class\_offset}
+have no loss-side analog, since they concern how the reductions of the evaluation composites
+behave rather than a property of one loss term.
 
-\textbf{Methodology note on confidence scale.} The eval-side unit tests
-(Section~\ref{sec:results}, \texttt{tests/test\_losses\_sanity.py}) use a ``fully confident'' logit
-encoding (softmax $\approx 1-10^{-10}$) to test perfect-prediction behavior. The loss-ablation
-sweeps deliberately use a more moderate confidence scale instead (softmax $\approx 0.999$): at
-full confidence, \texttt{PointHeatmapLoss}'s focal-loss log term saturates at its numerical clamp
-ceiling for \emph{every} confidently-wrong pixel, and since each predicted point blob spans
-multiple pixels, a handful of false-positive point predictions can inflate a sweep's total loss by
-roughly two orders of magnitude --- a test-harness artifact of total confidence no real model
-output actually reaches, not a property of the loss itself. This is itself a useful, real finding
-for Section~\ref{subsec:joint-setup}: the heatmap term's absolute magnitude scales differently from
-the other three (a CornerNet-style focal formulation, not a bounded $[0,1]$ ratio the
-tolerance/clDice terms are), motivating \texttt{PLEMMultiTaskLoss}'s per-term \texttt{weights} dict
-for rebalancing during real training.
+\textbf{Confidence scale.} The loss unit tests (Section~\ref{sec:results},
+\texttt{tests/test\_losses\_sanity.py}) use a fully confident logit encoding (softmax
+$\approx 1-10^{-10}$) to test behavior under a perfect prediction. The loss-ablation sweeps
+deliberately use a more moderate scale (softmax $\approx 0.999$). At full confidence, the
+focal-loss log term of \texttt{PointHeatmapLoss} saturates at its numerical clamp for every
+confidently wrong pixel, and because each predicted point blob spans several pixels, a handful of
+false-positive points can inflate a sweep's total loss by roughly two orders of magnitude, an
+artifact of a confidence no real model output reaches. The underlying point does carry over to
+real training: the heatmap term is a CornerNet-style focal loss rather than a ratio bounded in
+$[0,1]$ like the tolerance and clDice terms, so its magnitude scales differently, which is why
+\texttt{PLEMMultiTaskLoss} has a per-term \texttt{weights} dict.
 
 \subsection{Joint Multi-Source Training Setup}
 \label{subsec:joint-setup}
 
-\emph{This small run predates the switch to road intersections: its point class is Potsdam's
-tree/car blobs inside the softmax. It is kept as the proof of concept
+\emph{This small run predates the switch to road intersections, and its point class is Potsdam's
+tree and car blobs inside the softmax. We keep it as the proof of concept that
 Section~\ref{subsec:scaled-setup} scales up.}
 
-Neither SpaceNet nor Potsdam alone annotates all three feature types (Section~\ref{subsec:multitask-loss}):
-SpaceNet supplies road+building but no point class; Potsdam's 6-class palette includes
-\texttt{building} and point-capable \texttt{tree}/\texttt{car} classes but no road/linear class at
-all. A genuinely joint 0D/1D/2D training run therefore requires combining both sources under
-\texttt{PLEMMultiTaskLoss}'s masked multi-source scheme. \textbf{The data-side half of this is
-built and validated against real data}: \texttt{datasets/potsdam.py::\allowbreak{}label\_raster\_to\_building\_mask}
-extracts the \texttt{building} palette color (a straight threshold, deliberately not routed
-through the point pipeline's connected-component + area filter, which would wrongly split/drop
-large contiguous footprints) alongside the existing point extraction, combined by
-\texttt{label\_raster\_to\_multiclass\_mask}; \texttt{build\_potsdam\_sample(extract\_buildings=True)}
-builds this combined cache (\texttt{tile\_potsdam}'s new \texttt{min\_building\_pixels} parameter
-switches its crop-keep test to an OR condition). Run against the real 15-crop Potsdam sample:
-\textbf{14 of 15 cached crops have building coverage, 5 have point instances, 3 have both} ---
-confirming genuinely multiclass (building+point) tiles exist in the cache, not just in principle.
-\texttt{datasets/joint.py} then loads and tags every cached tile from both sources
-(\texttt{SOURCE\_CLASSES = \{"spacenet": [1,2], "potsdam": [2,3]\}}, \texttt{class\_mask\_for\_source()}
-returning the $(4,)$ mask \texttt{PLEMMultiTaskLoss} consumes directly) --- run against the real
-caches: \textbf{123 SpaceNet tiles + 30 Potsdam tiles = 153 tagged tiles}, split 70/15/15 at the
-tile level \emph{independently per source} before concatenating (a single pooled-then-permuted
-split risks starving the smaller Potsdam side, which has only 15 crops, from a split entirely).
+Neither SpaceNet nor Potsdam alone annotates all three feature types
+(Section~\ref{subsec:multitask-loss}). SpaceNet supplies roads and buildings but no point class,
+while Potsdam's 6-class palette includes \texttt{building} and the point-capable \texttt{tree} and
+\texttt{car} classes but no road or other linear class. A joint 0D/1D/2D training run therefore has
+to combine both sources under the masked multi-source scheme of \texttt{PLEMMultiTaskLoss}.
+\texttt{datasets/potsdam.py} extracts the \texttt{building} palette color by a straight threshold,
+not through the point pipeline's connected-component and area filter, which would split or drop
+large footprints, and combines it with the existing point extraction. Of the 15 cached Potsdam
+crops, 14 have building coverage, 5 have point instances and 3 have both. \texttt{datasets/joint.py}
+then loads and tags every cached tile from both
+sources, with \texttt{SOURCE\_CLASSES = \{"spacenet": [1,2], "potsdam": [2,3]\}} and
+\texttt{class\_mask\_for\_source()} returning the $(4,)$ mask that \texttt{PLEMMultiTaskLoss}
+consumes directly. On the real caches this gives 123 SpaceNet tiles and 30 Potsdam tiles, 153
+tagged tiles in all, split 70/15/15 at the tile level separately for each source before
+concatenation, since a single pooled and permuted split could leave the smaller Potsdam side, with
+only 15 crops, out of a split entirely.
 
-SpaceNet and Potsdam are not resampled to a common ground sample distance (SpaceNet
-${\sim}0.3$--$0.5$ m/px vs.\ Potsdam's 6 cm/px) --- each source is patchified independently to the
-same $256\times256$ \emph{pixel} patch size, accepting that a Potsdam patch covers a much smaller
-physical area than a SpaceNet patch; stated as an explicit, known limitation
-(Section~\ref{sec:discussion}) rather than silently glossed over. The resulting model is evaluated
-with \texttt{evaluate\_all(..., point\_classes=[3])} --- the first end-to-end exercise of
-\texttt{evaluate\_all()}'s \texttt{point\_classes} argument on a real trained model's output ---
-and compared against Section~\ref{subsec:trainedmodel-setup}'s frozen CE+Dice baseline on the
-SpaceNet-only classes/tiles they share, framed honestly as a \textbf{pipeline sanity check},
-matching Section~\ref{subsec:trainedmodel-setup}'s own framing, not a benchmark-scale ablation
-study.
+SpaceNet and Potsdam are not resampled to a common ground sample distance (${\sim}0.3$--$0.5$ m/px
+for SpaceNet against 6 cm/px for Potsdam). Each source is cut independently into the same
+$256\times256$ pixel patches, so a Potsdam patch covers a much smaller physical area than a
+SpaceNet patch, which we list as a known limitation (Section~\ref{sec:discussion}). The resulting
+model is evaluated with \texttt{evaluate\_all(..., point\_classes=[3])}, the first end-to-end use of
+the \texttt{point\_classes} argument on a real trained model's output, and compared with the frozen
+CE+Dice baseline of Section~\ref{subsec:trainedmodel-setup} on the SpaceNet classes and tiles they
+share.
 
 \subsection{Scaled Production Training Setup}
 \label{subsec:scaled-setup}
 
-Section~\ref{subsec:joint-setup}'s run establishes that the masked multi-source mechanism works
-mechanically; this pipeline tests it at a scale and source count closer to a real deployment,
-adds an illumination-robustness angle, and is where the final point feature was settled.
+This pipeline scales the run of Section~\ref{subsec:joint-setup} up to three sources and 1,033
+tiles, adds robustness to low light, and is where the final point feature was settled.
 
-\textbf{Sources.} A third data source, \textbf{SpaceNet6} --- Capella Space SAR imagery over
-Rotterdam with building-footprint labels only --- is converted to a pseudo-RGB image via
-percentile-clip normalization so it flows through the unmodified 3-channel \texttt{SmallUNet}.
-SAR is an active sensor, so it looks identical day or night --- the real, illumination-invariant
-half of a two-pronged night-robustness approach; the synthetic half is a low-light simulation
-(gamma darkening, brightness/contrast/saturation jitter, CLAHE, sensor-noise injection) applied to
-a random 40\% of training patches regardless of source. Scaled-up per-source samples give
-\textbf{1,033 tiles --- 550 SpaceNet + 200 Potsdam + 283 SpaceNet6} --- split 70/15/15
-independently per source (\textbf{723 train / 154 val / 156 test} tiles). In the final
-configuration \texttt{SOURCE\_CLASSES = \{"spacenet": [1,2,3], "potsdam": [2], "spacenet6": [2]\}}.
+\textbf{Sources.} A third source, SpaceNet6, provides Capella Space SAR imagery over Rotterdam with
+building-footprint labels only. We convert it to a pseudo-RGB image by percentile-clip
+normalization, so it passes through the unmodified 3-channel \texttt{SmallUNet}. SAR is an active
+sensor and looks the same day or night, which makes it the real, illumination-invariant half of a
+two-part approach to night robustness. The synthetic half is a low-light simulation (gamma
+darkening, brightness, contrast and saturation jitter, CLAHE and sensor-noise injection) applied to
+a random 40\% of training patches from every source. Larger per-source samples give 1,033 tiles
+(550 SpaceNet, 200 Potsdam and 283 SpaceNet6), split 70/15/15 separately for each source into 723
+training, 154 validation and 156 test tiles. The final configuration is
+\texttt{SOURCE\_CLASSES = \{"spacenet": [1,2,3], "potsdam": [2], "spacenet6": [2]\}}.
 
 \textbf{Point labels: road intersections.} \texttt{datasets/intersections.py} derives
-intersections from SpaceNet~3's vector road centerlines: it counts road ``arms'' at every vertex
-shared between road LineStrings (an endpoint contributes one arm, an interior vertex two) and
-keeps vertices with three or more arms --- X- and T-junctions, including a T whose through road is
-not split there. Lines that cross without a shared vertex (overpasses) are not counted. Nodes
-closer than 20\,px (6\,m) are merged, since complex junctions and dual carriageways otherwise
-produce tight clusters. On real SN3 geojsons this vertex rule agrees with geometric noding on 11
-of 12 sampled tiles, and every derived point falls on a road pixel. The cached sample carries
-\textbf{8,907 intersections over 550 tiles} (16.2 per tile; 528 tiles have at least one). Points
-are scored with \texttt{point\_f1} at a 10\,px (3\,m) tolerance --- the same tolerance roads get
---- on SpaceNet tiles only; the headline is the micro-averaged F1 over all test tiles.
+intersections from the vector road centerlines of SpaceNet~3. It counts road ``arms'' at every
+vertex shared between road LineStrings (an endpoint contributes one arm and an interior vertex two)
+and keeps vertices with three or more arms. This covers X- and T-junctions, including a T whose
+through road is not split at the junction. Lines that cross without a shared vertex, such as
+overpasses, are not counted. Nodes closer than 20\,px (6\,m) are merged, since complex junctions and
+dual carriageways otherwise produce tight clusters. On real SN3 geojsons this vertex rule agrees
+with geometric noding on 11 of 12 sampled tiles, and every derived point falls on a road pixel. The
+cached sample holds 8,907 intersections over 550 tiles (16.2 per tile, with 528 tiles holding at
+least one). Points are scored on SpaceNet tiles only, with \texttt{point\_f1} at a tolerance of
+10\,px (3\,m), the same tolerance roads get, and the headline figure is the micro-averaged F1 over
+all test tiles.
 
 \textbf{Building labels and the \texttt{building\_valid} mask.} An exact index of every SN2
-building tile's extent (read from the first 64\,KB of each tif) replaces
-Section~\ref{subsec:realdata-setup}'s approximate search, and every overlapping building tile is
-rasterized. Some $2\times2$ building-tile blocks are simply absent from the public SN2 training
-set, so each tile also records where building labels are known. Measured on all 257 Paris road
-tiles, only 9\% are fully covered and 55\% of tile area has building labels on average; across
-the 550-tile sample, coverage is \textbf{64\% of tile area} (80 tiles fully covered, 254 at or
-below half). Repairing the labels raised building pixels from 65.7M to 96.6M. Training switches
-building supervision off for any SpaceNet patch touching an unlabelled area (5,941 of 13,860
-SpaceNet training patches, 43\%, Section~\ref{subsec:multitask-loss}), and evaluation drops
-predicted buildings in unlabelled areas before scoring.
+building tile's extent, read from the first 64\,KB of each tif, replaces the approximate search of
+Section~\ref{subsec:realdata-setup}, and every overlapping building tile is rasterized. Some
+$2\times2$ blocks of building tiles are missing from the public SN2 training set, so each tile also
+records where building labels are known. Over all 257 Paris road tiles, only 9\% are fully covered,
+and on average 55\% of tile area has building labels. Across the 550-tile sample, coverage is 64\%
+of tile area, with 80 tiles fully covered and 254 at or below half. Repairing the labels raised the
+count of building pixels from 65.7M to 96.6M. Training switches building supervision off for any
+SpaceNet patch that touches an unlabelled area (5,941 of 13,860 SpaceNet training patches, or 43\%;
+Section~\ref{subsec:multitask-loss}), and evaluation drops predicted buildings in unlabelled areas
+before scoring.
 
-\textbf{Training and evaluation.} 40 epochs, batch size 48, mixed precision, cosine LR schedule,
-gradient clipping at norm 5.0, best checkpoint and early stopping (patience 8) on a validation
-selection loss, on a single A100. The point head's output-channel bias starts at $-4.6$
-(probability ${\approx}\,0.01$). After training, the point threshold is chosen by micro F1 on the
-SpaceNet \textbf{validation} tiles over a grid from 0.002 to 0.5; test tiles are never used to
-choose it. Each tile is scored only on the feature types its source annotates. A dark-test sweep
-re-scores every test tile at four fixed low-light severities (0.0/0.3/0.6/0.9).
+\textbf{Training and evaluation.} We train for 40 epochs on a single A100 with batch size 48, mixed
+precision, a cosine learning-rate schedule and gradient clipping at norm 5.0, and select the best
+checkpoint and stop early (patience 8) on a validation selection loss. The bias of the point head's
+output channel starts at $-4.6$ (probability ${\approx}\,0.01$). After training, the point
+threshold is chosen by micro F1 on the SpaceNet validation tiles over a grid from 0.002 to 0.5, and
+test tiles are never used to choose it. Each tile is scored only on the feature types its source
+annotates. A dark-test sweep re-scores every test tile at four fixed low-light severities
+(0.0/0.3/0.6/0.9).
 
 \subsection{Conventional-Training Baseline Setup}
 \label{subsec:baseline-setup}
 
-To separate what the joint loss contributes from what the pipeline contributes, a baseline is
-trained in the same notebook with everything held fixed except the loss and the
-checkpoint-selection rule: same data, tile split, patches, building-coverage masking, per-source
-class masking (Section~\ref{subsec:multitask-loss}), low-light augmentation, seed, network,
-optimizer, schedule, and 40-epoch ceiling with patience 8.
+To separate what the joint loss contributes from what the pipeline contributes, we train a
+baseline in the same notebook with everything held fixed except the loss and the rule for selecting
+a checkpoint. The data, tile split, patches, building-coverage masking, per-source class masking
+(Section~\ref{subsec:multitask-loss}), low-light augmentation, seed, network, optimizer, schedule,
+40-epoch ceiling and patience of 8 are all the same.
 
 \begin{itemize}
-  \item \textbf{Loss.} Cross-entropy + soft Dice on the road/building softmax --- the same function
-    as \texttt{PLEMMultiTaskLoss}'s base term, verified identical by a parity test --- and, for
-    intersections, per-pixel binary cross-entropy + soft Dice on the sigmoid channel against the
-    stamped $5\times5$ intersection squares, i.e.\ intersections treated as an ordinary rare
-    foreground class. The BCE positive weight is the training set's background-to-intersection
-    pixel ratio capped at 100 (raw ratio 5,770). No tolerance, clDice, or heatmap term, and no low
-    starting bias on the point channel.
-  \item \textbf{Selection.} Early stopping and the best checkpoint on validation mIoU over
-    background/road/building/intersection, the field's usual practice; the joint model keeps its
-    validation-loss rule.
-  \item \textbf{Intersection decoding.} Threshold the probability map, take connected components,
-    and report each centroid --- the standard path for a binary mask --- at the conventional 0.5
-    and at a threshold chosen on validation tiles by the same procedure as the joint model's, so a
-    difference in intersection scores cannot come from threshold choice alone.
+  \item \textbf{Loss.} Cross-entropy plus soft Dice on the road/building softmax, the same function
+    as the base term of \texttt{PLEMMultiTaskLoss}, which a parity test confirms is identical. For
+    intersections, per-pixel binary cross-entropy plus soft Dice on the sigmoid channel against the
+    stamped $5\times5$ intersection squares, which treats intersections as an ordinary rare
+    foreground class. The BCE positive weight is the training set's ratio of background to
+    intersection pixels, capped at 100 (the raw ratio is 5,770). There is no tolerance, clDice or
+    heatmap term, and no low starting bias on the point channel.
+  \item \textbf{Selection.} Early stopping and the best checkpoint use validation mIoU over
+    background, road, building and intersection, the usual practice in the field, while the joint
+    model keeps its validation-loss rule.
+  \item \textbf{Intersection decoding.} We threshold the probability map, take connected
+    components and report each centroid, the standard path for a binary mask. This is done at the
+    conventional 0.5 and at a threshold chosen on validation tiles by the same procedure as for the
+    joint model, so a difference in intersection scores cannot come from the choice of threshold
+    alone.
   \item \textbf{Scoring.} Both models are scored on the same 156 test tiles with conventional
-    metrics --- pixel accuracy, per-class IoU and mIoU (a class the source never annotates is
-    mapped to background on both sides; buildings are scored where labels exist), pixel IoU of the
-    intersection squares --- and with PLEM's metrics. Differences are paired by tile: mean, a 95\%
-    bootstrap confidence interval (10,000 resamples), and a two-sided Wilcoxon signed-rank test.
+    metrics and with PLEM's metrics. The conventional metrics are pixel accuracy, per-class IoU
+    and mIoU (a class the source never annotates is mapped to background on both sides, and
+    buildings are scored where labels exist), and pixel IoU of the intersection squares.
+    Differences are paired by tile, and we report the mean, a 95\% bootstrap confidence interval
+    (10,000 resamples) and a two-sided Wilcoxon signed-rank test.
 \end{itemize}
 
 The comparison tests two separate claims: that conventional and PLEM metrics can disagree about
 which of two models is better (the \emph{metric claim}), and that the joint loss is better on
-PLEM's metrics at matched training (the \emph{loss claim}).
+PLEM's metrics when training is matched (the \emph{loss claim}).

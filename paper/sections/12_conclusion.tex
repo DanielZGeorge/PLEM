@@ -1,68 +1,66 @@
 \section{Conclusion \& Future Work}
 \label{sec:conclusion}
 
-This paper makes two contributions that reinforce each other. The evaluation half
-(Sections~\ref{sec:evalprotocol}--\ref{sec:topological}) is a class-agnostic,
-tolerance/topology-aware metric library that found and fixed two real failure modes through an
-explicit synthetic-sweep $\to$ real-data validation $\to$ targeted additive fix $\to$
-regression-test loop. The training half (Section~\ref{sec:method}) asks whether the same geometric
-properties can be trained \emph{into} a model directly, rather than only measured afterward.
-\texttt{PLEMMultiTaskLoss} combines three differentiable analogs of those metrics (tolerance,
-topology, and --- via a genuine reformulation rather than a relaxation --- point-instance
-localization) into one multi-task loss, with a masked multi-source training scheme letting datasets
-that individually annotate only some of the three feature types jointly supervise one model.
-Section~\ref{subsec:lossablation-results}'s synthetic ablations confirm each term encodes the
-geometric sensitivity it was designed to. Section~\ref{subsec:joint-results}'s small real run shows
-all four terms learning jointly and turns up a real-data example of why CBHM's harsh composite and
-DTAF1's lenient one are both needed. Section~\ref{subsec:scaled-results} carries the mechanism to a
-1,033-tile, three-source production pipeline: its final model reaches SpaceNet
-\texttt{cbhm\_soft} 0.685 and detects road intersections --- the point feature, derived from the
-same vector labels as the roads --- at F1 0.279. Its six-run development record is as much a result
-as the final numbers: a point channel inside the segmentation softmax floods it, a point label that
-exists on one source only and spans tens of pixels is unlearnable, the heatmap loss's negative
-normalization has no safe default at full resolution, and a widely used public dataset leaves a
-third of its road-tile area without building labels. Each was caught by measuring rather than
-assuming --- per-term loss logs, per-source predicted-pixel counts, point scores restricted to tiles
-that actually contain points, and qualitative panels --- and most of those checks are built on
-Sections~\ref{sec:evalprotocol}--\ref{sec:topological}'s protocol.
-Section~\ref{subsec:baseline-results} trains the same pipeline the conventional way: on SpaceNet the
-two models tie on mIoU, while \texttt{cbhm\_soft}, \texttt{dtaf1\_topo}, clDice, BF, APLS, and
-intersection F1 all favour the joint loss, and on SpaceNet6 a model that fails by IoU either way
-scores 0.350 against 0.071 on boundary F1. The metrics this paper proposes therefore separate
-models that pixel overlap rates as equal; whether the joint loss's margin exceeds training-seed
-variance is the next thing to measure.
+This paper has two halves that support each other. The evaluation half
+(Sections~\ref{sec:evalprotocol}--\ref{sec:topological}) is a metric library that tolerates small
+positional errors, checks road connectivity and scores every feature class with the same code. It
+found and fixed two real failure modes through an explicit loop of
+synthetic sweeps $\to$ real-data validation $\to$ targeted additive fix $\to$ regression test. The
+training half (Section~\ref{sec:method}) asks whether a model can be trained to have the same
+geometric properties directly, instead of only being measured on them afterward.
+\texttt{PLEMMultiTaskLoss} combines three differentiable analogs of those metrics, for tolerance,
+topology and point-instance localization (the last a reformulation rather than a relaxation), into
+one multi-task loss, and a masked multi-source training scheme lets datasets that each annotate
+only some of the three feature types jointly supervise one model. The synthetic ablations of
+Section~\ref{subsec:lossablation-results} confirm that each term encodes the geometric sensitivity
+it was designed for. The small real run of Section~\ref{subsec:joint-results} shows all four terms
+learning together and gives a real-data example of why both CBHM's harsh composite and DTAF1's
+lenient one are needed. Section~\ref{subsec:scaled-results} carries the mechanism to a 1,033-tile,
+three-source production pipeline, whose final model reaches SpaceNet \texttt{cbhm\_soft} 0.685 and
+detects road intersections, the point feature derived from the same vector labels as the roads, at
+F1 0.279. Its six-run development record is a result in its own right. A point channel inside the
+segmentation softmax floods it; a point label that exists on one source only and spans tens of
+pixels cannot be learned; the heatmap loss's negative normalization has no safe default at full
+resolution; and a widely used public dataset leaves a third of its road-tile area without building
+labels. We caught each of these by measurement, using per-term loss logs, per-source counts of
+predicted pixels, point scores restricted to tiles that contain points, and qualitative panels, and
+most of those checks are built on the protocol of
+Sections~\ref{sec:evalprotocol}--\ref{sec:topological}. Section~\ref{subsec:baseline-results}
+trains the same pipeline the conventional way. On SpaceNet the two models tie on mIoU, while
+\texttt{cbhm\_soft}, \texttt{dtaf1\_topo}, clDice, BF, APLS and intersection F1 all favour the
+joint loss, and on SpaceNet6, where both models fail by IoU, boundary F1 is 0.350 against 0.071.
+The metrics this paper proposes therefore separate models that pixel overlap rates as equal.
 
-The highest-priority next steps:
+The highest-priority next steps are:
 \begin{itemize}
   \item \textbf{Raise road-intersection recall.} A third of junctions get no peak at any threshold
-    (Section~\ref{subsec:scaled-results}). Candidates: an intermediate negative-term weight between
-    the per-pixel mean and CenterNet's normalizer, or a lower-resolution heatmap head closer to
-    CenterNet's own design.
+    (Section~\ref{subsec:scaled-results}). Candidate fixes are an intermediate negative-term weight
+    between the per-pixel mean and CenterNet's normalizer, or a lower-resolution heatmap head closer
+    to CenterNet's own design.
   \item \textbf{Repeat the baseline comparison over more training seeds}
-    (Section~\ref{subsec:baseline-results}). With one seed per model, mIoU ties while every PLEM
-    metric favours the joint loss on SpaceNet; two or three more seeds per model would show whether
-    that gap exceeds training variance.
+    (Section~\ref{subsec:baseline-results}). Two or three more seeds per model would show whether
+    the SpaceNet gap on PLEM's metrics exceeds training variance.
 \end{itemize}
 
 Further future work:
 \begin{itemize}
-  \item Re-run \texttt{dtaf1\_topo} on the real 24-tile SpaceNet perturbation sample used for
-    Section~\ref{subsec:realdata-results}'s other real-data findings.
-  \item Fix SpaceNet6's road-on-buildings confusion (Section~\ref{sec:discussion}), e.g.\ a
-    SAR-specific encoder branch or explicit ``no road'' supervision on SAR tiles.
-  \item Separate the effect of the building-label repair from model improvement, e.g.\ by
+  \item Re-run \texttt{dtaf1\_topo} on the real 24-tile SpaceNet perturbation sample used for the
+    other real-data findings of Section~\ref{subsec:realdata-results}.
+  \item Fix SpaceNet6's confusion of buildings with roads (Section~\ref{sec:discussion}), for
+    example with a SAR-specific encoder branch or explicit ``no road'' supervision on SAR tiles.
+  \item Separate the effect of the building-label repair from model improvement, for example by
     re-scoring run 5's checkpoint against the repaired ground truth.
-  \item Explore learned/adaptive tolerance radii instead of fixed per-class constants
-    (Section~\ref{subsec:tolerance-radii}), and correspondingly a learned rather than fixed
+  \item Explore learned or adaptive tolerance radii in place of fixed per-class constants
+    (Section~\ref{subsec:tolerance-radii}), and with them a learned rather than fixed
     \texttt{iters} for \texttt{SoftClDiceLoss} (Section~\ref{subsec:cldice-loss}).
-  \item Characterize DTAF1-Topo's inherited APLS failure modes on short/sparse real road segments
-    with a dedicated sensitivity sweep, mirroring \texttt{sweep\_sparse\_class\_offset}'s treatment
-    of CBHM's analogous weakness (Section~\ref{subsec:class-imbalance}).
-  \item Tune \texttt{PLEMMultiTaskLoss}'s per-term \texttt{weights} now that the point channel gives
-    a real signal to optimize against.
-  \item Investigate whether \texttt{SoftClDiceLoss} alone provides meaningful indirect connectivity
-    pressure during training, as a cheaper partial substitute for the connectivity term
+  \item Characterize the APLS failure modes that DTAF1-Topo inherits on short or sparse real road
+    segments with a dedicated sensitivity sweep, as \texttt{sweep\_sparse\_class\_offset} does for
+    CBHM's similar weakness (Section~\ref{subsec:class-imbalance}).
+  \item Tune the per-term \texttt{weights} of \texttt{PLEMMultiTaskLoss}, now that the point
+    channel gives a real signal to optimize against.
+  \item Investigate whether \texttt{SoftClDiceLoss} alone gives useful indirect pressure toward
+    connectivity during training, as a cheaper partial substitute for the connectivity term that
     \texttt{losses/} otherwise cannot have
     (Sections~\ref{subsec:apls},~\ref{subsec:method-principle}).
-  \item Resample the three sources to a common GSD, or ablate whether the current mismatch matters.
+  \item Resample the three sources to a common GSD, or test whether the current mismatch matters.
 \end{itemize}

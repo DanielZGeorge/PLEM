@@ -1,113 +1,108 @@
 \section{Discussion \& Limitations}
 \label{sec:discussion}
 
-Grouped by which half of the paper each item belongs to. Every caveat referenced from earlier
-sections is expanded here exactly once.
-
 \subsection{Evaluation-Library Limitations}
 
 \begin{itemize}
-  \item DTAF1's road-breakage blind spot (Sections~\ref{subsec:motivation-results},
-    \ref{subsec:blindspot}) is fixed by DTAF1-Topo (Section~\ref{subsec:dtaf1topo}), which is now
-    part of \texttt{evaluate\_all()} and has been run on a trained model's real test output
-    (Section~\ref{subsec:scaled-results}: SpaceNet \texttt{dtaf1\_topo} 0.482 vs.\ \texttt{dtaf1}
-    0.771). It has still not been re-run on Section~\ref{subsec:realdata-results}'s 24-tile
-    perturbation sample.
+  \item DTAF1-Topo (Section~\ref{subsec:dtaf1topo}) fixes DTAF1's road-breakage blind spot
+    (Sections~\ref{subsec:motivation-results}, \ref{subsec:blindspot}). It is now part of
+    \texttt{evaluate\_all()} and has been run on a trained model's real test output
+    (Section~\ref{subsec:scaled-results}: SpaceNet \texttt{dtaf1\_topo} 0.482 against
+    \texttt{dtaf1} 0.771), but it has still not been re-run on the 24-tile perturbation sample of
+    Section~\ref{subsec:realdata-results}.
   \item \texttt{cbhm\_soft} (Section~\ref{subsec:weighted-reduction}) only helps when the failing
-    class is also the pixel-count minority; when a class sparse by \emph{area} is not sparse by
-    \emph{pixel count} (\texttt{Khartoum\_img371}), the fix is partial.
-  \item clDice is brittle on short/sparse real road segments --- moderate offsets can collapse it
-    to exactly 0 even when DTAF1 degrades gracefully. Neither composite is uniformly more
-    trustworthy; report \texttt{cbhm}, \texttt{cbhm\_soft}, \texttt{dtaf1}, and
-    \texttt{dtaf1\_weighted} together, not one alone.
-  \item APLS (Section~\ref{subsec:apls}) here is a raster-skeleton approximation, not true
-    vector-graph APLS: the model predicts a road mask, not a graph, so evaluation has no predicted
-    vector graph to compare. The vector \emph{ground-truth} graph is used only at dataset-build
-    time, to derive intersection points.
+    class is also the minority by pixel count. When a class that is sparse by area is not sparse by
+    pixel count, as on \texttt{Khartoum\_img371}, the fix is partial.
+  \item clDice is brittle on short or sparse real road segments, where moderate offsets can
+    collapse it to exactly 0 while DTAF1 degrades gracefully. Neither composite is uniformly more
+    trustworthy, so \texttt{cbhm}, \texttt{cbhm\_soft}, \texttt{dtaf1} and
+    \texttt{dtaf1\_weighted} should be reported together.
+  \item Our APLS (Section~\ref{subsec:apls}) is a raster-skeleton approximation of true
+    vector-graph APLS. The model predicts a road mask rather than a graph, so evaluation has no
+    predicted vector graph to compare against. The vector ground-truth graph is used only at
+    dataset-build time, to derive intersection points.
   \item \textbf{Road-intersection ground truth inherits SpaceNet's labelling conventions.}
     Intersections are shared vertices of the vector road labels, so a junction the annotators did
     not snap, or an at-grade crossing drawn without a shared vertex, is missing from the ground
-    truth; conversely an overpass drawn with a shared vertex would be counted. The vertex rule
-    agreed with geometric noding on 11 of 12 sampled tiles, but was not audited at scale.
-  \item The harmonic-blend asymmetry proved in Section~\ref{subsec:dtaf1topo} (DTAF1-Topo can only
-    ever pull a score \emph{down} toward APLS, never up) is intentional, but means DTAF1-Topo
-    inherits every one of APLS's own failure modes (e.g., a genuinely correct but very
-    short/sparse road segment with too few sampled control-point pairs) --- not yet characterized
-    empirically.
+    truth, and an overpass drawn with a shared vertex would be counted. The vertex rule agreed with
+    geometric noding on 11 of 12 sampled tiles, but we did not audit it at scale.
+  \item The harmonic blend of Section~\ref{subsec:dtaf1topo} can only pull a score down toward
+    APLS, never up. We intended this asymmetry, but it means DTAF1-Topo inherits every failure mode
+    of APLS itself, such as a correct but very short or sparse road segment with too few sampled
+    control-point pairs, and we have not yet characterized these empirically.
 \end{itemize}
 
 \subsection{Training-Loss Limitations}
 
 \begin{itemize}
-  \item \textbf{\texttt{losses/} has no connectivity term, by design, not oversight.}
-    APLS/DTAF1-Topo have no tractable lightweight differentiable relaxation, so a model trained
-    with \texttt{PLEMMultiTaskLoss} has no direct training pressure toward connectivity, only
-    toward tolerance-band coverage and centerline topology at \texttt{SoftClDiceLoss}'s
-    fixed-iteration granularity. The gap between SpaceNet \texttt{dtaf1\_topo} and \texttt{dtaf1}
-    in Section~\ref{subsec:scaled-results} is consistent with exactly this.
+  \item \textbf{\texttt{losses/} has no connectivity term, by design.} APLS and DTAF1-Topo have no
+    tractable, lightweight differentiable relaxation, so a model trained with
+    \texttt{PLEMMultiTaskLoss} has no direct training pressure toward connectivity, only toward
+    tolerance-band coverage and toward centerline topology at the fixed-iteration granularity of
+    \texttt{SoftClDiceLoss}. The gap between SpaceNet \texttt{dtaf1\_topo} and \texttt{dtaf1} in
+    Section~\ref{subsec:scaled-results} is consistent with this.
   \item \textbf{The heatmap's negative-term normalization has no safe default at full resolution}
     (Sections~\ref{subsec:heatmap-loss},~\ref{subsec:scaled-results}). The per-pixel mean
-    over-detected $30\times$; CenterNet's peak-count normalizer, at ${\sim}40\times$ its designed
-    background-to-peak ratio, kept peak probabilities near 0.03 so that a fixed 0.3 threshold found
-    1 intersection out of 1,389. Validation calibration recovers F1 0.279, but recall is capped by
-    training (62\% of intersections have no peak even at threshold 0.002). An intermediate negative
+    over-detected $30\times$. CenterNet's peak-count normalizer, at ${\sim}40\times$ its designed
+    ratio of background to peaks, kept peak probabilities near 0.03, so a fixed 0.3 threshold found
+    1 intersection out of 1,389. Validation calibration recovers F1 0.279, but training caps the
+    recall: 62\% of intersections have no peak even at threshold 0.002. An intermediate negative
     weight, or a lower-resolution heatmap head as in CenterNet itself, is untested.
-  \item \textbf{\texttt{PointHeatmapLoss} is a genuine train/eval formulation mismatch, not a
-    relaxation.} Point F1 (Section~\ref{subsec:pointf1}) is evaluated via Hungarian instance
-    matching but trained via dense heatmap regression --- different algorithms with different
-    failure modes, so minimizing the heatmap loss is not directly minimizing anything Point F1
-    measures, only something correlated with it. This mismatch is inherent to point supervision,
-    not a shortcut taken for convenience.
-  \item \texttt{SoftClDiceLoss} runs soft-skeletonization for a \emph{fixed} iteration count
-    (\texttt{iters}=10), not to convergence, so its width-invariance is bounded rather than exact
-    --- validated up to a $3\times$ width ratio (Section~\ref{subsec:cldice-loss}).
-  \item The heatmap term's loss magnitude differs from the other three by orders of magnitude
-    (Sections~\ref{subsec:lossablation-setup},~\ref{subsec:lossablation-results}) --- a property
-    of its CornerNet-style focal formulation, not a bug. \texttt{PLEMMultiTaskLoss}'s per-term
-    \texttt{weights} dict exists to rebalance this; the right weighting has not been tuned.
+  \item \textbf{\texttt{PointHeatmapLoss} uses a different formulation in training and
+    evaluation.} Point F1 (Section~\ref{subsec:pointf1}) is evaluated by Hungarian instance
+    matching but trained by dense heatmap regression. The two algorithms have different failure
+    modes, so minimizing the heatmap loss does not directly minimize anything Point F1 measures,
+    only something correlated with it.
+  \item \texttt{SoftClDiceLoss} runs soft-skeletonization for a fixed number of iterations
+    (\texttt{iters}=10) instead of to convergence, so its width invariance is bounded rather than
+    exact. We validated it up to a $3\times$ width ratio (Section~\ref{subsec:cldice-loss}).
+  \item The heatmap term's loss differs from the other three by orders of magnitude
+    (Sections~\ref{subsec:lossablation-setup},~\ref{subsec:lossablation-results}), as expected of
+    its CornerNet-style focal formulation. The per-term \texttt{weights}
+    dict of \texttt{PLEMMultiTaskLoss} exists to rebalance it, but we have not tuned the weighting.
   \item \textbf{SpaceNet6 is the weakest source} (\texttt{cbhm\_soft} 0.350,
-    Section~\ref{subsec:scaled-results}): the model labels rows of SAR building returns as road.
-    SpaceNet6 never supervises the road class, so per-source masking
-    (Section~\ref{subsec:multitask-loss}) gives the road channel no signal there; the same
+    Section~\ref{subsec:scaled-results}), because the model labels rows of SAR building returns as
+    road. SpaceNet6 never supervises the road class, so per-source masking
+    (Section~\ref{subsec:multitask-loss}) gives the road channel no signal there, and the same
     mechanism that lets sources annotate different classes leaves this confusion unpenalized. A
     SAR-specific encoder branch, or supervising ``no road'' on SAR tiles, is untested.
   \item The \texttt{max\_instances} cap in \texttt{gt\_centroids\_to\_heatmap} (default 100) is a
-    defensive bound found necessary while profiling: a pathological, non-blob-like synthetic target
-    drove its per-centroid loop to thousands of connected components, stalling a training batch
-    for minutes. Real tiles carry at most a few dozen intersections per 256\,px patch, so the cap
-    is a no-op on real data.
-  \item SpaceNet/Potsdam/SpaceNet6 are not resampled to a common ground sample distance
-    (Sections~\ref{subsec:joint-setup},~\ref{subsec:scaled-setup}) --- a Potsdam or SpaceNet6
-    training patch covers a different physical area than a SpaceNet patch at the same pixel size.
-    No obvious failure mode was observed, but no ablation isolates it.
+    defensive bound we found necessary while profiling. A pathological, non-blob-like synthetic
+    target drove its per-centroid loop to thousands of connected components and stalled a training
+    batch for minutes. Real tiles carry at most a few dozen intersections per 256\,px patch, so the
+    cap has no effect on real data.
+  \item SpaceNet, Potsdam and SpaceNet6 are not resampled to a common ground sample distance
+    (Sections~\ref{subsec:joint-setup},~\ref{subsec:scaled-setup}), so a Potsdam or SpaceNet6
+    training patch covers a different physical area than a SpaceNet patch of the same pixel size.
+    We saw no obvious failure from this, but no ablation isolates it.
 \end{itemize}
 
 \subsection{Validation-Scope Limitations}
 
 \begin{itemize}
   \item The CE+Dice baseline (Sections~\ref{subsec:trainedmodel-setup},~\ref{subsec:unet-results})
-    is trained on ${\sim}100$ curated real tiles with no pretraining, CPU-only --- a real
-    end-to-end validation of the metric library, but too small a dataset to read as a segmentation
-    benchmark result.
+    is trained on CPU on ${\sim}100$ curated real tiles with no pretraining. It is a real
+    end-to-end validation of the metric library, but the dataset is too small for its numbers to
+    be read as a segmentation benchmark.
   \item \textbf{The matched baseline comparison rests on one seed per model}
-    (Section~\ref{subsec:baseline-results}). Its paired confidence intervals cover test-tile
-    variation only; the SpaceNet PLEM-metric gaps ($+0.02$ to $+0.07$) are small enough that
-    training-seed variance could account for part of them, and the intersection-F1 gain
-    ($p = 0.015$) does not survive a multiple-comparison correction. The baseline also embodies
-    choices a reader could make differently: mIoU selection, connected-component decoding, and a
-    BCE positive weight capped at 100. The small-scale runs of
-    Sections~\ref{subsec:unet-results} and~\ref{subsec:joint-results} (15 vs.\ 2 epochs, different
-    tasks) are superseded by Section~\ref{subsec:baseline-results} for this question.
+    (Section~\ref{subsec:baseline-results}). Its paired confidence intervals cover variation across
+    test tiles only. The SpaceNet PLEM-metric gaps ($+0.02$ to $+0.07$) are small enough that
+    variance across training seeds could account for part of them, and the intersection-F1 gain
+    ($p = 0.015$) does not survive a correction for multiple comparisons. The baseline also
+    reflects choices a reader could make differently: mIoU selection, connected-component decoding
+    and a BCE positive weight capped at 100. For this question, Section~\ref{subsec:baseline-results}
+    supersedes the small-scale runs of Sections~\ref{subsec:unet-results}
+    and~\ref{subsec:joint-results} (15 against 2 epochs, on different tasks).
   \item \textbf{Point-head history.} Runs 1--5 of Table~\ref{tab:scaled-history} each failed on
-    the point feature in a different way; every root cause is fixed in code and covered by a
+    the point feature in a different way. Every root cause is fixed in code and covered by a
     regression test, but the current model's point recall (0.194 on test) is still limited.
   \item \textbf{Building scores are not comparable across the production runs.} Run 6 repaired the
     building ground truth and scores buildings only where labels exist
     (Section~\ref{subsec:scaled-setup}), so its SpaceNet building gain (\texttt{bf\_mean}
-    $0.43 \to 0.74$) mixes better labels with better predictions; the two were not separated.
-  \item \textbf{The production runs are a development sequence, not an ablation.} Consecutive runs
-    changed more than one setting (point label, head type, loss normalization, building labels),
-    so no single setting's effect is isolated by Table~\ref{tab:scaled-history}.
-  \item A run without the low-light augmentation, compared on the same dark-test sweep, would be
-    needed to isolate the augmentation's own contribution; it has not been run.
+    $0.43 \to 0.74$) mixes better labels with better predictions, and we did not separate the two.
+  \item \textbf{The production runs are a development sequence and not an ablation.} Consecutive
+    runs changed more than one setting (point label, head type, loss normalization and building
+    labels), so Table~\ref{tab:scaled-history} does not isolate the effect of any single setting.
+  \item Isolating the low-light augmentation's own contribution would need a run without it,
+    compared on the same dark-test sweep, and we have not run one.
 \end{itemize}

@@ -4,39 +4,34 @@
 \subsection{Synthetic Sensitivity Results}
 \label{subsec:synthetic-results}
 
-Table~\ref{tab:failure-modes} and the extended sweep results in
-Sections~\ref{subsec:motivation-results}--\ref{subsec:apls-recovery} are this section's synthetic
-eval-metric results, computed directly against the live library for this paper rather than reused
-from prior notes.
+The synthetic results for the evaluation metrics are Table~\ref{tab:failure-modes} and the
+extended sweeps of Sections~\ref{subsec:motivation-results}--\ref{subsec:apls-recovery}, all
+computed directly with the library.
 
 \subsection{Real-Data Case Studies}
 \label{subsec:realdata-results}
 
 \begin{itemize}
-  \item \textbf{Finding \#1 --- DTAF1 blind spot, confirmed on real data.} Averaged across 24 real
-    SpaceNet tiles (Vegas + Khartoum), 75\% road-pixel dropout leaves plain DTAF1 at
-    $\mathbf{1.000}$ while CBHM collapses to $\mathbf{{\sim}0.57}$ (driven by
-    \texttt{cldice\_mean} falling to ${\sim}0.40$). \texttt{dtaf1\_weighted} does \textbf{not} fix
-    this --- also stays at 1.000, since area-weighting only changes how per-class scores combine,
-    not the per-pixel tolerance-matching logic within a class. \textbf{Open item}:
-    \texttt{dtaf1\_topo} has not yet been re-validated on this real 24-tile sample
-    (synthetic-only so far, Section~\ref{subsec:dtaf1topo}) --- flagged as future work
-    (Sections~\ref{sec:discussion}--\ref{sec:conclusion}).
-  \item \textbf{Finding \#2 --- CBHM sparse-class collapse, \texttt{Khartoum\_img371} case study.}
-    Detailed in Section~\ref{subsec:weighted-reduction}: 12px road offset $\to \mathrm{cbhm}=0.000$
-    vs.\ $\mathrm{dtaf1}=0.934$; \texttt{cbhm\_soft} recovers only to $\mathbf{0.285}$ because the
-    road has more GT pixels than the building despite its tiny area share.
-  \item \textbf{Contrast case (\texttt{Khartoum\_img333})}: $\mathrm{cbhm}$ $0.48$--$0.52 \to
-    \mathrm{cbhm\_soft}$ $\mathbf{0.85}$ --- a clean win where the building genuinely dominates by
-    pixel count.
-  \item \textbf{Aggregate table} across all 24 tiles: \texttt{road\_offset}@16px
-    ($\mathrm{cbhm}\ 0.669 \to \mathrm{cbhm\_soft}\ 0.712$), \texttt{road\_dropout}@0.75
-    ($\mathrm{cbhm}\ 0.568 \to \mathrm{cbhm\_soft}\ 0.646$).
-  \item \textbf{Point-feature results} on 15 Potsdam crops: \texttt{point\_dropout} (precision
-    flat at 1.000, recall falls linearly to 0), \texttt{point\_clutter} (recall flat at 1.000,
-    precision $1.0 \to 0.36 \to 0.13$ at 5/20 spurious blobs), \texttt{point\_jitter} (drops to
-    ${\sim}0.38$ by 6px on real data --- faster than the synthetic sweep, attributed to real
-    objects being packed closer together).
+  \item \textbf{Finding 1: DTAF1's blind spot on real data.} Averaged over 24 real SpaceNet tiles
+    (Vegas and Khartoum), deleting 75\% of road pixels leaves plain DTAF1 at $1.000$, while CBHM
+    collapses to ${\sim}0.57$ as \texttt{cldice\_mean} falls to ${\sim}0.40$.
+    \texttt{dtaf1\_weighted} does not fix this and also stays at 1.000, since area-weighting only
+    changes how per-class scores are combined, not the per-pixel tolerance matching within a
+    class. \texttt{dtaf1\_topo} has not yet been run on this sample
+    (Section~\ref{sec:discussion}).
+  \item \textbf{Finding 2: CBHM's sparse-class collapse} (Section~\ref{subsec:weighted-reduction}).
+    On \texttt{Khartoum\_img371} a 12px road offset gives $\mathrm{cbhm}=0.000$ against
+    $\mathrm{dtaf1}=0.934$, and \texttt{cbhm\_soft} recovers only to $0.285$. On
+    \texttt{Khartoum\_img333}, where the building dominates by pixel count, it recovers cleanly
+    ($\mathrm{cbhm}$ $0.48$--$0.52 \to \mathrm{cbhm\_soft}$ $0.85$).
+  \item \textbf{Aggregate over all 24 tiles.} \texttt{road\_offset} at 16px moves
+    $\mathrm{cbhm}\ 0.669 \to \mathrm{cbhm\_soft}\ 0.712$, and \texttt{road\_dropout} at 0.75 moves
+    $\mathrm{cbhm}\ 0.568 \to \mathrm{cbhm\_soft}\ 0.646$.
+  \item \textbf{Point features on 15 Potsdam crops.} Under \texttt{point\_dropout}, precision stays
+    flat at 1.000 while recall falls linearly to 0. Under \texttt{point\_clutter}, recall stays
+    flat at 1.000 while precision falls $1.0 \to 0.36 \to 0.13$ at 5 and 20 spurious blobs. Under
+    \texttt{point\_jitter}, the score drops to ${\sim}0.38$ by 6px on real data, faster than in the
+    synthetic sweep, which we attribute to real objects being packed closer together.
 \end{itemize}
 
 \subsection{Applied Pipeline: Trained U-Net Results (CE+Dice Baseline)}
@@ -59,69 +54,58 @@ from prior notes.
   \end{tabular}
 \end{table}
 
-Best tile \texttt{Shanghai\_img1375} ($\mathrm{cbhm}=0.617$), worst \texttt{Shanghai\_img1711}
-($\mathrm{cbhm}=0.163$). Framed explicitly as ``first end-to-end validation that the metric
-library scores an actual trained model's output sensibly,'' not as a SOTA benchmark claim. This
-table is the CE+Dice \textbf{baseline} side of Section~\ref{subsec:joint-results}'s forthcoming
-ablation.
+The best tile is \texttt{Shanghai\_img1375} ($\mathrm{cbhm}=0.617$) and the worst is
+\texttt{Shanghai\_img1711} ($\mathrm{cbhm}=0.163$). This is the first check that the library scores
+a real trained model's output sensibly, and the CE+Dice reference for
+Section~\ref{subsec:joint-results}.
 
 \subsection{Loss Ablation Results}
 \label{subsec:lossablation-results}
 
-Seven sweeps (Section~\ref{subsec:lossablation-setup}) confirm the qualitative story
-Table~\ref{tab:correspondence} predicts --- each new loss term responds distinctly to the
-perturbation family its \texttt{metrics/} counterpart is designed to catch, and stays flat (a
-negative control) under perturbations that don't touch its configured class(es). All values below
-are each configuration's own raw loss value (not the cumulative \texttt{plus\_X} framing) at
-representative severities, computed directly against the live code for this paper:
+The seven sweeps of Section~\ref{subsec:lossablation-setup} confirm the qualitative picture that
+Table~\ref{tab:correspondence} predicts. Each new loss term responds to the perturbation family its
+\texttt{metrics/} counterpart is designed to catch, and stays flat as a negative control under
+perturbations that do not touch its configured classes. The values below are each term's own raw
+loss at representative severities, not the cumulative \texttt{plus\_X} values.
 
-\textbf{Road offset sweep} (tolerance radius $=10$px): \texttt{tolerance}'s own value stays
-essentially flat ($0.0043$) through offset $=10$px, then climbs ($0.0056$ at 12px) exactly at its
-configured tolerance boundary --- reproducing the eval-side ``holds until exactly the tolerance
-boundary'' story on the training-signal side. \texttt{cldice}'s own value jumps almost immediately
-(already at $1.0$ loss delta by offset $=2$px) and then plateaus at its collapsed value ---
-reproducing clDice's documented zero-tolerance-to-offset property.
+\textbf{Road offset sweep} (tolerance radius $=10$px). The \texttt{tolerance} term stays almost flat
+($0.0043$) up to an offset of 10px and then climbs ($0.0056$ at 12px), exactly at its configured
+tolerance boundary, as DTAF1 does. The \texttt{cldice} term jumps almost at once (already a loss delta of
+$1.0$ by an offset of 2px) and then plateaus at its collapsed value, which reproduces clDice's
+documented lack of tolerance to offset.
 
-\textbf{Road thickness sweep} (GT fixed 3px): \texttt{cldice}'s own value tracks the
-\texttt{ce\_dice} baseline closely through thickness $=13$px (within ${\sim}0.05$ of each other at
-every point up to a $4\times$ width ratio), then diverges sharply from thickness $=15$px onward ---
-reproducing Section~\ref{subsec:cldice-loss}'s unit-test finding ($3\times$ ratio scores
-identically to exact width) at a coarser, sweep-level granularity and confirming the
-$\mathrm{iters}{=}10$ default's practical width-invariance range.
+\textbf{Road thickness sweep} (ground truth fixed at 3px). The \texttt{cldice} term tracks the
+\texttt{ce\_dice} baseline closely up to a thickness of 13px, staying within ${\sim}0.05$ of it at
+every point up to a $4\times$ width ratio, and then diverges sharply from 15px onward, consistent
+with the $3\times$ unit test of Section~\ref{subsec:cldice-loss}.
 
-\textbf{Building erosion sweep}: \texttt{tolerance} tracks building erosion closely (a consistent
-gap above \texttt{ce\_dice}, e.g.\ $1.2338$ vs.\ $1.0526$ at erosion radius $=11$px, reflecting the
-tight 2px building tolerance), while \texttt{cldice} stays essentially identical to
-\texttt{ce\_dice} throughout ($1.0531$ vs.\ $1.0526$) --- the expected negative control, since
-\texttt{SoftClDiceLoss} is configured over linear classes only.
+\textbf{Building erosion sweep}. The \texttt{tolerance} term tracks building erosion closely, with
+a consistent gap above \texttt{ce\_dice} (for example $1.2338$ against $1.0526$ at an erosion radius
+of 11px) that reflects the tight 2px building tolerance. The \texttt{cldice} term stays almost
+identical to \texttt{ce\_dice} throughout ($1.0531$ against $1.0526$), the expected negative control,
+since \texttt{SoftClDiceLoss} is configured over linear classes only.
 
-\textbf{Point jitter/dropout/clutter sweeps}: \texttt{heatmap} is by far the most shape-sensitive
-term, rising from a baseline of $0.58$ to $70.6$ by 8px of jitter (then plateauing/slightly
-declining as points scatter further from any plausible match) --- while \texttt{tolerance} and
-\texttt{cldice} stay flat at their perturbation-independent baseline values throughout every point
-sweep, confirming both as correct negative controls. \texttt{ce\_dice}'s own value also rises
-modestly under point perturbations ($0.51 \to 0.84$ under jitter), but nowhere near as sharply or
-as saturating as \texttt{heatmap}'s response.
+\textbf{Point jitter, dropout and clutter sweeps}. \texttt{heatmap} is by far the most
+shape-sensitive term, rising from a baseline of $0.58$ to $70.6$ by 8px of jitter and then
+plateauing or declining slightly as points scatter further from any plausible match.
+\texttt{tolerance} and \texttt{cldice} stay flat at their baseline values throughout every point
+sweep, as negative controls should. \texttt{ce\_dice} also rises modestly under point perturbations
+($0.51 \to 0.84$ under jitter), but much less sharply than \texttt{heatmap}, and without
+saturating.
 
-\textbf{No flat curve was found where sensitivity was expected} --- every term's own raw value
-moves under the perturbation family its \texttt{metrics/} counterpart is designed to catch, and
-every intended negative control stayed flat. See \texttt{tests/test\_loss\_sensitivity.py}'s
-module docstring for the full per-sweep numeric tables.
+The module docstring of \texttt{tests/test\_loss\_sensitivity.py} holds the full numeric tables.
 
 \subsection{Joint Multi-Source Training Results}
 \label{subsec:joint-results}
 
-\textbf{Executed} (\texttt{notebooks/train\_unet\_joint.ipynb}, this revision).
-Section~\ref{subsec:joint-setup}'s setup ran to completion: 153 cached tiles loaded (123 SpaceNet
-+ 30 Potsdam), split per-source 70/15/15 (SpaceNet: 86/18/19 train/val/test; Potsdam: 21/4/5),
-patchified to 3117 train + 652 val patches. A per-batch source-mix printout confirmed both sources
-appear in training (batches 0--2: 16/0, 16/0, 15/1 spacenet/potsdam patches) --- Potsdam patches
-are necessarily rare per batch (only 21 of 3117 train patches, ${\approx}0.7\%$, since each
-Potsdam crop contributes exactly one already-patch-sized tile versus 36 patches per large SpaceNet
-tile), but they are not absent.
-
-Training ran for 2 epochs (reduced from the baseline's 15 --- an explicit, stated scope choice for
-this CPU-only pipeline sanity check, not a claim that more epochs wouldn't help):
+The setup of Section~\ref{subsec:joint-setup} ran to completion in
+\texttt{notebooks/train\_unet\_joint.ipynb}. It loaded 153 cached tiles (123 SpaceNet and 30
+Potsdam), split them 70/15/15 per source (SpaceNet 86/18/19 train/val/test, Potsdam 21/4/5) and cut
+them into 3117 training and 652 validation patches. Potsdam patches are rare, 21 of 3117
+(${\approx}0.7\%$), since each Potsdam crop is already patch-sized while a SpaceNet tile gives 36
+patches, but a printout of the source mix confirmed both reach training (batches 0--2 held 16/0,
+16/0 and 15/1 SpaceNet/Potsdam patches). Training ran for 2 epochs against the baseline's 15, to
+keep this CPU-only run short.
 
 \begin{table}
   \caption{Joint training: per-epoch total and sub-term losses.}
@@ -134,9 +118,9 @@ this CPU-only pipeline sanity check, not a claim that more epochs wouldn't help)
     2 & 2.6823 & 2.5957 & 1.2497 & 0.5509 & 0.8718 \\
     \bottomrule
   \end{tabular}
-  \vspace{2pt}
+  \par\vspace{2pt}
   {\footnotesize heatmap: $0.3461 \to 0.0098$ (shown separately in Figure~\ref{fig:joint-subterms}
-  for scale).}
+  for scale).\par}
 \end{table}
 
 \begin{figure}
@@ -144,16 +128,14 @@ this CPU-only pipeline sanity check, not a claim that more epochs wouldn't help)
   \Description{Line chart of four per-term training loss curves (ce\_dice, tolerance, cldice,
   heatmap) over 2 epochs. All four lines slope downward; the heatmap curve drops most steeply,
   from about 0.35 to about 0.01.}
-  \caption{Per-term training loss over 2 epochs --- all four sub-terms decrease, not just the
-  total; \texttt{heatmap} drops most sharply (a $35\times$ reduction).}
+  \caption{Per-term training loss over 2 epochs. All four sub-terms decrease, and
+  \texttt{heatmap} drops most sharply (a $35\times$ reduction).}
   \label{fig:joint-subterms}
 \end{figure}
 
-\textbf{Verification passed}: all four sub-terms decreased epoch-over-epoch, not just the total
-(Figure~\ref{fig:joint-subterms}) --- \texttt{heatmap} dropped the most sharply ($0.346 \to 0.010$,
-a $35\times$ reduction), consistent with the model quickly learning that predicting near-zero
-point probability almost everywhere is a strong early strategy given how sparse real point
-coverage is even within Potsdam patches.
+All four sub-terms and the total decreased (Figure~\ref{fig:joint-subterms}). The $35\times$ drop
+in \texttt{heatmap} is consistent with the model quickly learning to predict a near-zero point
+probability almost everywhere, since points are sparse even within Potsdam patches.
 
 \begin{table}
   \caption{Joint model test-set evaluation, split by source, via \texttt{evaluate\_all()} with
@@ -174,24 +156,20 @@ coverage is even within Potsdam patches.
   \end{tabular}
 \end{table}
 
-\textbf{Verification passed}: \texttt{point\_f1\_mean} is non-\texttt{None} for 5/5 real stitched
-Potsdam test tiles (values $[0.0, 0.0, 0.0, 1.0, 0.0]$) --- the first time
-\texttt{evaluate\_all()}'s \texttt{point\_classes} argument has ever been exercised end-to-end on
-a real trained model's output, not left \texttt{None}.
+\texttt{point\_f1\_mean} has a value for all 5 real stitched Potsdam test tiles
+($[0.0, 0.0, 0.0, 1.0, 0.0]$), the first time the \texttt{point\_classes} argument of
+\texttt{evaluate\_all()} was exercised end to end on a real trained model's output.
 
-\textbf{Baseline comparison}: the raw \texttt{data/train\_unet\_test\_results.csv} this session's
-\texttt{train\_unet.ipynb} would produce was not present in this environment (that baseline was
-originally run in an earlier session; only its already-documented aggregate survives,
-Table~\ref{tab:unet-baseline}: \texttt{cbhm} $0.316\pm0.126$, \texttt{dtaf1} $0.440\pm0.134$, 15
-epochs, single-source SpaceNet-only 3-class model), so no row-matched comparison was possible this
-session --- only a directional one against those published aggregates. The joint run's
-SpaceNet-only \texttt{cbhm} ($0.144$) and \texttt{dtaf1} ($0.304$) both come in \textbf{lower}
-than the baseline's. Read this honestly rather than as evidence the new loss underperforms: this
-run trained for 2 epochs against the baseline's 15, on a bigger effective task (a 4-class head
-jointly absorbing gradient from four loss terms, one of them from a source, Potsdam, contributing
-under 1\% of training patches) --- an apples-to-apples epoch-matched comparison has not been run.
-\textbf{Framed honestly as a pipeline sanity check, not a benchmark or an ablation claim}, matching
-Section~\ref{subsec:trainedmodel-setup}'s own posture toward the baseline itself.
+\textbf{Baseline comparison.} The per-tile results of the baseline
+(\texttt{data/train\_unet\_test\_results.csv}) were not preserved; only its aggregate survives
+(Table~\ref{tab:unet-baseline}: \texttt{cbhm} $0.316\pm0.126$ and \texttt{dtaf1}
+$0.440\pm0.134$ for a 15-epoch, SpaceNet-only 3-class model). A tile-matched comparison was
+therefore not possible, only a directional one against those aggregates. The joint run's
+SpaceNet \texttt{cbhm} ($0.144$) and \texttt{dtaf1} ($0.304$) are both lower than the baseline's.
+We do not read this as evidence that the new loss underperforms: this run trained for 2 epochs
+against the baseline's 15, on a larger effective task, with a 4-class head absorbing gradient from
+four loss terms, one of them fed by a source (Potsdam) that contributes under 1\% of training
+patches. No epoch-matched comparison has been run.
 
 \begin{figure}
   \includegraphics[width=\linewidth]{figures/joint_qualitative_panels.png}
@@ -199,46 +177,40 @@ Section~\ref{subsec:trainedmodel-setup}'s own posture toward the baseline itself
   prediction overlay, raw prediction mask), one row per test tile, ordered worst to best by cbhm
   score: Vegas\_img425, Paris\_img449, Paris\_img250, Vegas\_img997. Roads are overlaid in red,
   buildings in green.}
-  \caption{Qualitative review, worst$\to$best \texttt{cbhm} test tiles (GT / prediction / raw
-  prediction mask; red$=$road, green$=$building). \texttt{Vegas\_img425} (top row, worst by
-  \texttt{cbhm}) is visually one of the better-looking predictions --- see text for why its score
-  is nonetheless exactly 0. \texttt{Paris\_img449}/\texttt{Paris\_img250} over-predict road across
-  open terrain with no GT road, consistent with an underfit 2-epoch model.}
+  \caption{Qualitative review of test tiles from worst to best by \texttt{cbhm} (GT / prediction /
+  raw prediction mask; red$=$road, green$=$building). \texttt{Vegas\_img425} (top row, worst by
+  \texttt{cbhm}) is visually one of the better predictions; the text explains why its score is
+  still exactly 0. \texttt{Paris\_img449} and \texttt{Paris\_img250} over-predict road across open
+  terrain with no ground-truth road, consistent with an underfit 2-epoch model.}
   \label{fig:joint-qualitative}
 \end{figure}
 
-\textbf{Qualitative review} (Figure~\ref{fig:joint-qualitative}, 4-color panels, worst$\to$best
-\texttt{cbhm} tiles): mixed quality, as expected at 2 epochs, and one genuinely interesting
-real-data finding. The \textbf{worst}-scoring tile by \texttt{cbhm} (\texttt{Vegas\_img425},
-$\mathrm{cbhm}=0.000$) is visually one of the \emph{better}-looking predictions in the panel ---
-road centerlines and building footprints are both recognizable and roughly aligned with GT. The
-per-metric breakdown explains the apparent contradiction and is a real-data echo of
-Section~\ref{subsec:cbhm}'s own ``harsh vs.\ lenient foil'' story: $\mathrm{bf\_mean}=0.000$
-exactly (building Boundary F1, tolerance 2px, collapsed completely) while
-$\mathrm{dtaf1\_weighted}=0.902$ and $\mathrm{cldice\_mean}=0.474$ are both high --- CBHM's
-harmonic mean zero-collapses the \emph{entire} tile score from one class's tight-tolerance metric
-hitting exactly zero, even though the lenient, tolerance-based DTAF1 view and the road-only clDice
-view both say this tile is mostly correct. This is the first time that exact zero-collapse
-mechanism (Appendix~\ref{app:a3}) has been observed on a real trained model's output rather than
-only in synthetic scenes (Table~\ref{tab:failure-modes}) or GT-vs-perturbed-GT sweeps
-(Section~\ref{subsec:realdata-results}). The best-scoring shown tile (\texttt{Vegas\_img997},
-$\mathrm{cbhm}=0.364$) has a more balanced per-metric profile ($\mathrm{dtaf1}=0.402$,
-$\mathrm{cldice\_mean}=0.336$, $\mathrm{bf\_mean}=0.397$) --- no single class collapsing, road and
-building both partially but not perfectly recovered. The two weakest-looking predictions in the
-panel (\texttt{Paris\_img449}, \texttt{Paris\_img250}) show substantial over-prediction of the
-road class across open/agricultural terrain that has no GT road, consistent with an underfit
-model at this epoch budget, not a structural failure of the joint loss or masking scheme. No
-qualitative evidence of a masking bug (e.g.\ a SpaceNet tile hallucinating point-class
-predictions, which would indicate \texttt{class\_mask} leaking) was observed in any reviewed
-panel.
+\textbf{Qualitative review} (Figure~\ref{fig:joint-qualitative}, tiles from worst to best by
+\texttt{cbhm}). Quality is mixed, as expected after 2 epochs, and one real-data finding stands out.
+The worst tile by \texttt{cbhm} (\texttt{Vegas\_img425}, $\mathrm{cbhm}=0.000$) is visually one of
+the better predictions in the panel, with recognizable road centerlines and building footprints
+roughly aligned with the ground truth. The per-metric breakdown explains this and repeats on real
+data the harsh-versus-lenient story of Section~\ref{subsec:cbhm}: $\mathrm{bf\_mean}=0.000$ exactly,
+because building boundary F1 at a 2px tolerance collapsed completely, while
+$\mathrm{dtaf1\_weighted}=0.902$ and $\mathrm{cldice\_mean}=0.474$ are both high. This is the first
+time we saw this zero collapse (Appendix~\ref{app:a3}) on a real model's output rather than on
+synthetic scenes (Table~\ref{tab:failure-modes}) or perturbed ground truth
+(Section~\ref{subsec:realdata-results}). The best tile shown
+(\texttt{Vegas\_img997}, $\mathrm{cbhm}=0.364$) has a more balanced profile
+($\mathrm{dtaf1}=0.402$, $\mathrm{cldice\_mean}=0.336$, $\mathrm{bf\_mean}=0.397$), with no single
+class collapsing and both road and building partly recovered. The two weakest-looking predictions
+(\texttt{Paris\_img449} and \texttt{Paris\_img250}) over-predict the road class across open and
+agricultural terrain that has no ground-truth road, which fits an underfit model. No panel showed
+point-class predictions on a SpaceNet tile, which would indicate a leaking \texttt{class\_mask}.
 
 \subsection{Scaled Production Training Results}
 \label{subsec:scaled-results}
 
-\textbf{Final model} (run 6, best checkpoint at epoch 38 of 40, validation-calibrated point
-threshold). The loss components all decline over the full 40 epochs (train: \texttt{ce\_dice}
-$1.074 \to 0.740$, \texttt{tolerance} $0.408 \to 0.278$, \texttt{cldice} $0.733 \to 0.560$,
-\texttt{heatmap} $4.494 \to 3.511$; validation selection loss $6.017 \to$ best $4.349$).
+\textbf{Final model.} The final model is run 6, with its best checkpoint at epoch 38 of 40 and a
+validation-calibrated point threshold. All loss components decline over the full 40 epochs (on
+training data, \texttt{ce\_dice} $1.074 \to 0.740$, \texttt{tolerance} $0.408 \to 0.278$,
+\texttt{cldice} $0.733 \to 0.560$ and \texttt{heatmap} $4.494 \to 3.511$; the validation selection
+loss falls from $6.017$ to a best of $4.349$).
 
 \begin{table*}
   \caption{Production model, test-set means per source; each tile scored only on the classes its
@@ -256,21 +228,21 @@ $1.074 \to 0.740$, \texttt{tolerance} $0.408 \to 0.278$, \texttt{cldice} $0.733 
   \end{tabular}
 \end{table*}
 
-\texttt{dtaf1\_topo} reads well below \texttt{dtaf1} on SpaceNet (0.482 vs.\ 0.771,
-Table~\ref{tab:scaled-test}): this is its first real-data use, and the gap is the raster-skeleton
-APLS term penalizing road fragmentation that plain DTAF1 cannot see --- the
-Section~\ref{subsec:blindspot} blind spot, now observed on a trained model's output.
+\texttt{dtaf1\_topo} reads well below \texttt{dtaf1} on SpaceNet (0.482 against 0.771,
+Table~\ref{tab:scaled-test}). This is its first use on real data, and the gap is APLS penalizing
+road fragmentation that plain DTAF1 cannot see, the blind spot of Section~\ref{subsec:blindspot}.
 
-\textbf{Road intersections} (SpaceNet test tiles; 82 of 83 contain at least one): 547 predicted
-against 1,389 real, 270 matched within 3\,m --- \textbf{micro precision 0.494, recall 0.194, F1
-0.279} (mean per-tile F1 0.213). The validation tiles chose a threshold of 0.1 (validation micro
-F1 0.280); 0.07 was almost tied (0.278) with a predicted-per-real ratio of 1.19 instead of 0.38.
-Two diagnostics bound what calibration alone can achieve. \emph{Separability}: the head's
-probability at real intersections has median 0.046 (10th--90th percentile 0.016--0.120), against
-median 0.013 (90th percentile 0.029, 99th 0.052) on road pixels more than 30\,px from any
-intersection --- the head ranks junctions above plain road, but the distributions overlap.
-\emph{Recall ceiling}: even at a threshold of 0.002, only 62\% of validation intersections have any
-peak within 10\,px; a third of junctions are invisible to the head at any threshold.
+\textbf{Road intersections.} On the SpaceNet test tiles, 82 of 83 of which contain at least one
+intersection, the model predicts 547 intersections against 1,389 real ones, and 270 match within
+3\,m, for a micro precision of 0.494, recall of 0.194 and F1 of 0.279 (mean per-tile F1 0.213). The
+validation tiles chose a threshold of 0.1 (validation micro F1 0.280); 0.07 was almost tied (0.278),
+with a predicted-per-real ratio of 1.19 instead of 0.38. Two diagnostics bound what calibration
+alone can achieve. For \emph{separability}, the head's probability at real intersections has a
+median of 0.046 (10th--90th percentile 0.016--0.120), against a median of 0.013 (90th percentile
+0.029, 99th 0.052) on road pixels more than 30\,px from any intersection, so the head ranks
+junctions above plain road but the distributions overlap. For the \emph{recall ceiling}, even at a
+threshold of 0.002 only 62\% of validation intersections have any peak within 10\,px, so a third of
+junctions are invisible to the head at any threshold.
 
 \begin{table}
   \caption{Train/predict asymmetry: predicted pixels per class on the test tiles. Inference takes
@@ -288,22 +260,22 @@ peak within 10\,px; a third of junctions are invisible to the head at any thresh
   \end{tabular}
 \end{table}
 
-The intersection head predicts only on optical road imagery
-(Table~\ref{tab:scaled-asymmetry}). SpaceNet6 is the exception for roads: 544K road pixels on SAR
-tiles, mostly along rows of buildings, which is where SpaceNet6's building score is lost ---
-SpaceNet6 never supervises the road class, so nothing in training says those are not roads.
+The intersection head fires only on optical road imagery (Table~\ref{tab:scaled-asymmetry}).
+SpaceNet6 is the exception for roads, with 544K road pixels on SAR tiles, mostly along rows of
+buildings, and this is where SpaceNet6's building score is lost: SpaceNet6 never supervises the road
+class, so nothing in training says those pixels are not road.
 
-\textbf{Darkness.} Re-scoring the same test tiles at simulated low-light severities
-0.0/0.3/0.6/0.9: SpaceNet \texttt{cbhm\_soft} 0.685/0.592/0.561/0.434, Potsdam
-0.568/0.543/0.528/0.481, SpaceNet6 0.350/0.330/0.331/0.328 (radar, unaffected by design), and
+\textbf{Darkness.} Re-scoring the same test tiles at simulated low-light severities of
+0.0/0.3/0.6/0.9 gives SpaceNet \texttt{cbhm\_soft} 0.685/0.592/0.561/0.434, Potsdam
+0.568/0.543/0.528/0.481, SpaceNet6 0.350/0.330/0.331/0.328 (radar, unaffected by design) and
 road-intersection F1 0.279/0.209/0.193/0.071. Points degrade faster than buildings or roads.
 
 \textbf{Development record.} The final configuration is the sixth full 40-epoch run of this
-pipeline. Each earlier run failed in one specific, diagnosable way
-(Table~\ref{tab:scaled-history}); we report them because each failure mode is general to
+pipeline. Each earlier run failed in one specific way that we could diagnose
+(Table~\ref{tab:scaled-history}). We report them because each failure mode applies generally to
 multi-task, multi-source training with a point head, and each fix is now covered by a regression
-test. Consecutive runs changed more than one setting, so the table is a development record, not an
-ablation.
+test. Consecutive runs changed more than one setting, so the table is a development record and not
+an ablation.
 
 \begin{table*}
   \caption{Development record of the production pipeline. $^\dagger$Run 1's evaluation outputs were
@@ -335,9 +307,10 @@ ablation.
 \subsection{Conventional Baseline vs.\ the Joint Loss}
 \label{subsec:baseline-results}
 
-Both models ran all 40 epochs (best epoch: baseline 36 by validation mIoU, joint model 38). The
-joint model is run 6 of Section~\ref{subsec:scaled-results}, re-executed with the conventional-metric
-columns; its numbers reproduce Table~\ref{tab:scaled-test} exactly.
+Both models ran all 40 epochs, with the best epoch at 36 for the baseline (by validation mIoU) and
+38 for the joint model. The joint model is run 6 of Section~\ref{subsec:scaled-results},
+re-executed to add the conventional-metric columns, and its numbers reproduce
+Table~\ref{tab:scaled-test} exactly.
 
 \begin{table*}
   \caption{Conventional (CE+Dice, mIoU-selected) vs.\ joint-loss model on the same test tiles,
@@ -375,47 +348,46 @@ columns; its numbers reproduce Table~\ref{tab:scaled-test} exactly.
   \end{tabular}
 \end{table}
 
-\textbf{Metric claim: supported.} On SpaceNet the conventional metrics call the two models a tie:
-the paired mIoU difference is $+0.002$ (95\% CI $-0.004$ to $+0.008$, $p = 0.64$), and pixel
+\textbf{Metric claim: supported.} On SpaceNet the conventional metrics call the two models a tie.
+The paired mIoU difference is $+0.002$ (95\% CI $-0.004$ to $+0.008$, $p = 0.64$), and pixel
 accuracy is 0.003 lower for the joint model. Every PLEM metric separates them, with confidence
-intervals excluding zero: \texttt{dtaf1} $+0.069$, clDice $+0.043$, \texttt{cbhm} $+0.043$,
-\texttt{dtaf1\_topo} $+0.038$, \texttt{cbhm\_soft} $+0.038$, road APLS $+0.020$, BF $+0.020$
+intervals that exclude zero: \texttt{dtaf1} $+0.069$, clDice $+0.043$, \texttt{cbhm} $+0.043$,
+\texttt{dtaf1\_topo} $+0.038$, \texttt{cbhm\_soft} $+0.038$, road APLS $+0.020$ and BF $+0.020$
 ($p \le 0.002$ for each). The tie in mIoU hides two opposite moves, road IoU $+0.036$ and building
-IoU $-0.026$; on buildings IoU and BF point in opposite directions, i.e.\ the joint model's
-footprints overlap the ground truth less but have better-placed boundaries. Tile by tile, the mIoU
-and \texttt{dtaf1\_topo} differences have opposite signs on 30 of 83 tiles (\texttt{cbhm}: 23 of
-83); the largest case, \texttt{Vegas\_img1407}, loses 0.088 mIoU and gains 0.109
-\texttt{dtaf1\_topo} (APLS $+0.20$). Within either model, Kendall's $\tau$ between per-tile mIoU
-and the PLEM segmentation metrics is 0.47--0.80, and only 0.30 for intersection F1. For
-intersections the gap is starkest (Table~\ref{tab:baseline-points}): pixel IoU of the intersection
-squares is 0.01--0.03 for every model and threshold and does not track detection quality, which
-ranges from F1 0.001 to 0.279.
+IoU $-0.026$. On buildings, IoU and BF point in opposite directions: the joint model's footprints
+overlap the ground truth less but have better-placed boundaries. Tile by tile, the mIoU and
+\texttt{dtaf1\_topo} differences have opposite signs on 30 of 83 tiles (23 of 83 for
+\texttt{cbhm}), and the largest case, \texttt{Vegas\_img1407}, loses 0.088 mIoU while gaining 0.109
+\texttt{dtaf1\_topo} (APLS $+0.20$). Within either model, Kendall's $\tau$ between per-tile mIoU and
+the PLEM segmentation metrics is 0.47--0.80, and only 0.30 for intersection F1. The gap is starkest
+for intersections (Table~\ref{tab:baseline-points}): pixel IoU of the intersection squares is
+0.01--0.03 for every model and threshold and does not track detection quality, which ranges from F1
+0.001 to 0.279.
 
-SpaceNet6 is the extreme case: mIoU is level (0.477 vs.\ 0.480) and both models fail by building
-IoU (0.023 vs.\ 0.037), yet BF and \texttt{cbhm} are 0.071 vs.\ 0.350. The baseline predicts almost
-no buildings on SAR (148K pixels over 43 tiles, 4 tiles empty); the joint model predicts buildings
-on every tile (521K pixels), placed near the ground-truth boundaries but barely overlapping them.
-We suspect SAR layover, which displaces building returns from their footprints, but have not
-verified it. This is evidence that the joint model finds SAR buildings that pixel overlap does not
-credit, not that either model is a good SAR building detector.
+SpaceNet6 is the extreme case. mIoU is level (0.477 against 0.480) and both models fail by building
+IoU (0.023 against 0.037), yet BF and \texttt{cbhm} are 0.071 against 0.350. The baseline predicts
+almost no buildings on SAR (148K pixels over 43 tiles, with 4 tiles empty), while the joint model
+predicts buildings on every tile (521K pixels), placed near the ground-truth boundaries but barely
+overlapping them. We suspect SAR layover, which displaces building returns from their footprints,
+but have not verified it. This is evidence that the joint model finds SAR buildings that pixel
+overlap does not credit; it does not show that either model is a good SAR building detector.
 
 \textbf{Loss claim: supported on SpaceNet and SpaceNet6, not on Potsdam.} On SpaceNet the joint
-model is better on every PLEM metric and on intersections: micro F1 0.279 against the baseline's
-0.218 when both thresholds are calibrated on validation tiles (per-tile mean F1 difference
-$+0.045$, CI $+0.009$ to $+0.081$, $p = 0.015$). The baseline is not worse on every point
+model is better on every PLEM metric and on intersections, with micro F1 0.279 against the
+baseline's 0.218 when both thresholds are calibrated on validation tiles (per-tile mean F1
+difference $+0.045$, CI $+0.009$ to $+0.081$, $p = 0.015$). The baseline does better on one point
 statistic: its probabilities spread wider, so its calibrated threshold gives a predicted/real ratio
 near 1 (0.85, against the joint model's 0.39). On Potsdam (buildings only) the PLEM metrics show no
 difference (\texttt{cbhm} $-0.004$, CI $-0.037$ to $+0.029$), while the conventional metrics favour
-the \emph{baseline} (building IoU $-0.055$ for the joint model, $p = 0.02$).
+the baseline (building IoU $-0.055$ for the joint model, $p = 0.02$).
 
 \textbf{Darkness.} The joint model degrades less on PLEM's metrics. At severity 0.9, SpaceNet
-\texttt{cbhm\_soft} is 0.434 vs.\ 0.302 and Potsdam 0.481 vs.\ 0.387, although the two models start
-level on Potsdam. mIoU shows a much smaller gap on SpaceNet (0.414 vs.\ 0.391) and on Potsdam still
-favours the baseline at every severity (0.378 vs.\ 0.406 at 0.9).
+\texttt{cbhm\_soft} is 0.434 against 0.302, and Potsdam 0.481 against 0.387, although the two
+models start level on Potsdam. mIoU shows a much smaller gap on SpaceNet (0.414 against 0.391) and
+on Potsdam still favours the baseline at every severity (0.378 against 0.406 at 0.9).
 
-\emph{Caveats.} One training seed per model; the confidence intervals capture test-tile variation,
-not training variation. The two selection rules differ by design. With ${\sim}28$ paired
-comparisons, the SpaceNet and SpaceNet6 PLEM-metric differences survive a Bonferroni correction
-(threshold 0.0018) except road APLS ($p = 0.0020$); the intersection-F1 and Potsdam IoU differences
-do not.
-
+\emph{Caveats.} We trained one seed per model, so the confidence intervals capture variation across
+test tiles, not across training runs. The two selection rules differ by design. With ${\sim}28$
+paired comparisons, the SpaceNet and SpaceNet6 PLEM-metric differences survive a Bonferroni
+correction (threshold 0.0018) except road APLS ($p = 0.0020$); the intersection-F1 and Potsdam IoU
+differences do not.

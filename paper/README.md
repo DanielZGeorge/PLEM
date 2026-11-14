@@ -133,7 +133,5 @@ The paper is being revised one section at a time (body first, then §2, then §1
 then appendices). Items found in one section that need a change elsewhere are listed here until
 that section's pass:
 
-- §6.3 (`subsec:dtaf1topo`): the closed-form bullet says $2A/(1+A)$ is "always $\le$ APLS".
-  It is $\ge$ APLS on $[0,1]$ (e.g. $A=0.5$ gives $0.667$). The true property is that the blend
-  never exceeds F1 and is pulled toward the lower of the two. Fix in the §4–6 pass.
-- §2.2, §2.3 and §2.6 are still one-line stubs; they need real prose and citations.
+- §2.2, §2.3 and §2.6 now have one or two sentences of prose each, using only the citations
+  already there. They still need more related work and citations.

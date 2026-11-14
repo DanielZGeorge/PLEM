@@ -1,23 +1,18 @@
 \section{Analysis and Design for Composite Robustness}
 \label{sec:composite}
 
-A controlled-complexity task family, an efficient corrective proxy, then a parameter-design
-application.
-
 \subsection{Class-Imbalance--Controlled Tasks}
 \label{subsec:class-imbalance}
 
-\texttt{sweep\_class\_imbalance} and \texttt{sweep\_sparse\_class\_offset} parameterize a
-controlled-complexity axis: instead of varying a task's spatial frequency, we vary the road's
-\emph{share of GT pixels} (0.4--3.1\% in \texttt{sweep\_class\_imbalance}, with the road entirely
-missing from the prediction) or its \emph{offset} (\texttt{sweep\_sparse\_class\_offset}, road
-share fixed at ${\sim}0.4\%$). In both sweeps, \texttt{cbhm} (harsh, harmonic) sits at exactly
-$0.000$ for every non-trivial perturbation level, while \texttt{cbhm\_soft} tracks the dominant
-(building) class instead, staying between $0.758$ and $1.000$ across the same ranges. As a scalar
-summary, define the \textbf{harsh-composite collapse threshold}: the smallest perturbation
-magnitude at which \texttt{cbhm} first reaches exactly 0. Empirically this threshold is
-effectively immediate --- \texttt{cbhm}'s harmonic mean has essentially zero tolerance once one
-class is fully wrong, regardless of how small that class's share of the scene is.
+\texttt{sweep\_class\_imbalance} and \texttt{sweep\_sparse\_class\_offset} define a controlled axis
+of task complexity: the road's share of ground-truth pixels (0.4--3.1\% in \texttt{sweep\_class\_imbalance}, with the road missing entirely
+from the prediction) or its offset (\texttt{sweep\_sparse\_class\_offset}, with the road share
+fixed at ${\sim}0.4\%$). In both sweeps the harsh harmonic \texttt{cbhm} sits at exactly $0.000$
+for every non-trivial perturbation level, while \texttt{cbhm\_soft} follows the dominant building
+class and stays between $0.758$ and $1.000$ over the same ranges. The \emph{harsh-composite
+collapse threshold}, the smallest perturbation at which \texttt{cbhm} first reaches exactly 0, is
+reached immediately: once one class is fully wrong, the harmonic mean has no tolerance, however
+small that class's share of the scene.
 
 \subsection{Weighted Reduction as an Efficient Corrective Proxy}
 \label{subsec:weighted-reduction}
@@ -27,7 +22,7 @@ class is fully wrong, regardless of how small that class's share of the scene is
                          w_{\mathrm{polygon}} \cdot \mathrm{BF}_{\mathrm{mean,weighted}}
 \end{align}
 where $w_{\mathrm{linear}} = N_{\mathrm{linear}} / (N_{\mathrm{linear}} + N_{\mathrm{polygon}})$
-is each type's share of total GT pixels (0.5/0.5 if both totals are 0).
+is each type's share of the total ground-truth pixels (0.5/0.5 if both totals are 0).
 
 \begin{lstlisting}[language=Python, caption={\texttt{metrics/unified.py:88-102}}]
 cl_mean_weighted = (float(np.dot(cldice_weights, cldice_scores) / cl_total)
@@ -40,37 +35,30 @@ w_bf = float(bf_total / type_total) if type_total > 0 else 0.5
 cbhm_soft = w_cl * cl_mean_weighted + w_bf * bf_mean_weighted
 \end{lstlisting}
 
-The key structural move: \texttt{cbhm\_soft} is a \textbf{reweighting of already-computed
-per-class scores}, not a redesign of the harmonic-mean composite itself. It costs nothing beyond
-the per-class scores DTAF1/CBHM already compute. \textbf{Stated carefully, not oversold}:
-\texttt{cbhm\_soft} is a weighted \emph{arithmetic} mean, not geometric --- a geometric mean still
-collapses to exactly 0 whenever one input is 0, same as harmonic (formalized in
-Appendix~\ref{app:proofs}, Sections~\ref{app:a3}--\ref{app:a4}).
+\texttt{cbhm\_soft} reweights per-class scores that DTAF1 and CBHM already compute, so it costs
+nothing extra and leaves the harmonic-mean composite itself unchanged. It uses an arithmetic mean,
+since a geometric mean also collapses to exactly 0 whenever one input is 0
+(Appendix~\ref{app:proofs}, Sections~\ref{app:a3}--\ref{app:a4}).
 
-\textbf{Worked example --- the real failure that motivated this fix.} On real SpaceNet imagery
-(\texttt{composite\_vs\_submetric\_report.ipynb}, tile \texttt{Khartoum\_img371}), a 12px road
+\textbf{Worked example.} The real failure that motivated this fix came from SpaceNet imagery
+(\texttt{composite\_vs\_submetric\_report.ipynb}, tile \texttt{Khartoum\_img371}). A 12px road
 offset gave $\mathrm{cbhm}=0.000$ despite $\mathrm{dtaf1}=0.934$ (per-class road F1 $=0.867$,
-precision $=0.872$, recall $=0.863$) --- the road is only ${\sim}0.1\%$ of image pixels, and
-clDice collapsed entirely on this sparse, offset road, dragging the harmonic mean to exactly zero
-even though the dominant building class was essentially perfect. \texttt{cbhm\_soft} recovers
-only partially here ($0.000 \to \mathbf{0.285}$), because the road actually has \emph{more} GT
-pixels than the building despite its tiny share of image \emph{area} --- area-weighting only
-helps when the failing class is also the pixel-count minority. Contrast
-\texttt{Khartoum\_img333}, where the building genuinely dominates by pixel count: $\mathrm{cbhm}$
-$0.48$--$0.52 \to \mathrm{cbhm\_soft}$ $\mathbf{0.85}$, a clean recovery. This nuance is treated as
-a real limitation, not a clean win --- expanded in Section~\ref{sec:discussion}.
+precision $=0.872$, recall $=0.863$). The road covers only ${\sim}0.1\%$ of the image's pixels, and
+clDice collapsed entirely on this sparse, offset road, which dragged the harmonic mean to exactly
+zero even though the dominant building class was essentially perfect. \texttt{cbhm\_soft} recovers
+only partially here ($0.000 \to 0.285$), because the road has more ground-truth pixels than the
+building despite its tiny share of the image area, and area-weighting only helps when the failing
+class is also the minority by pixel count. On \texttt{Khartoum\_img333}, where the building does
+dominate by pixel count, the recovery is clean: $\mathrm{cbhm}$ $0.48$--$0.52 \to
+\mathrm{cbhm\_soft}$ $0.85$. Section~\ref{sec:discussion} returns to this limitation.
 
 \subsection{Choosing Per-Class Tolerance Radii}
 \label{subsec:tolerance-radii}
 
-\texttt{DEFAULT\_TOLERANCES = \{"road": 10, "building": 2\}} (pixels) were validated, not guessed,
-against the offset and erosion sweeps in Section~\ref{subsec:motivation-results}: the road offset
-sweep shows DTAF1 holding at $1.000$ through exactly the 10px boundary and softening immediately
-past it, confirming the tolerance behaves as intended rather than being either so tight it rejects
-correct predictions or so loose it never penalizes anything. This is a cheap, already-available
-sweep used as the design proxy instead of an expensive full retrain (or, here, a full real-data
-re-annotation) for every candidate tolerance value --- though PLEM's tolerances are fixed
-physically-motivated constants ($d = \text{physical\_metres} / \text{GSD\_metres\_per\_pixel}$)
-rather than a learned/optimized parameter; Section~\ref{sec:conclusion} lists learned/adaptive
-tolerance radii as future work. Section~\ref{subsec:tolerance-loss}'s \texttt{ToleranceBandLoss}
-reuses these same tolerance values directly via a shared \texttt{class\_config}.
+We validated \texttt{DEFAULT\_TOLERANCES = \{"road": 10, "building": 2\}} (pixels) against the
+offset and erosion sweeps of Section~\ref{subsec:motivation-results}. The road offset sweep shows
+DTAF1 holding at $1.000$ up to exactly the 10px boundary and softening immediately past it, so the
+tolerance neither rejects correct predictions nor lets everything pass. The sweep is a cheap
+stand-in for re-annotating real data at every candidate tolerance. PLEM's tolerances are fixed,
+physically motivated constants ($d = \text{physical\_metres} / \text{GSD\_metres\_per\_pixel}$),
+not learned ones; Section~\ref{sec:conclusion} lists learned or adaptive radii as future work.

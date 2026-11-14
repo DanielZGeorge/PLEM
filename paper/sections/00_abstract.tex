@@ -1,35 +1,6 @@
 \begin{abstract}
-Pixel intersection-over-union (IoU) as an evaluation tool for linear features such as roads fails
-under many different circumstances. A small centerline offset or a width error collapses the score
-even when the extracted road network is geometrically and topologically correct. We first
-introduce DTAF1, a distance-tolerant, per-class F1 score built on tolerance-radius matching via
-Euclidean distance transforms and class-agnostic across road, building, and point classes, and
-CBHM, a harmonic-mean composite of centerline Dice (clDice) and boundary F1 deliberately designed
-as DTAF1's harsh foil. Applying both to real SpaceNet and ISPRS Potsdam imagery surfaced two
-failure modes, each fixed with an additive, non-breaking companion metric: \texttt{cbhm\_soft}
-(area-weighted, non-collapsing) and DTAF1-Topo (a raster-skeleton APLS connectivity term closing
-DTAF1's road-breakage blind spot). Building on this evaluation vocabulary, we then ask a training
-question: can a single model learn to predict point (0D), linear (1D), and polygonal (2D) map
-features \emph{jointly}, using a loss shaped by the same tolerance/topology/instance-matching
-considerations that motivate these metrics? We introduce \texttt{PLEM MultiTaskLoss}, combining a
-soft tolerance-band term (DTAF1 analog), a soft-clDice term, and a CenterNet-style
-Gaussian-heatmap term for points, plus a masked multi-source scheme letting datasets that each
-annotate only some feature types (SpaceNet: road, building, and road intersections; ISPRS Potsdam
-and SpaceNet6 SAR: buildings) jointly supervise one model. Points are \emph{road intersections},
-derived from the same vector road labels as the road class and predicted by an independent sigmoid
-head. Across a 1,033-tile, three-source production run, the final model reaches
-\texttt{cbhm\_soft} 0.685 on SpaceNet test tiles and road-intersection F1 0.279 at a
-validation-calibrated threshold. Against a conventionally trained baseline (cross-entropy + Dice,
-selected on mIoU) on identical data, the two models tie on mIoU (0.570 vs.\ 0.572) while every
-PLEM metric favours the joint loss (\texttt{cbhm\_soft} $+0.038$, intersection F1 0.279 vs.\
-0.218): the joint loss's gains in road connectivity, boundary accuracy and junction detection are
-invisible to pixel IoU. We also report four lessons from the six development runs behind this
-model. A point channel placed inside the segmentation softmax took over road and building pixels.
-An earlier point class of trees and cars, from Potsdam, could not be learned at all. The way the
-heatmap loss normalizes its negative term swung the detector from predicting $30\times$ too many
-intersections to predicting almost none, until its threshold was calibrated on validation tiles.
-Finally, 36\% of the area of SpaceNet's road tiles has no public building labels, and had silently
-been trained and scored as ``no building''.
+Pixel IoU fails as a metric for linear features, such as roads, under a number of circumstances. A small geometric line offset or width error collapses the score even when the road network is topologically or geometrically sound. As such, we introduce DTAF1: a distance-tolerant per-class F1 score built on tolerance-radius matching via Euclidean
+distance transforms and class-agnostic across road, building, and point classes, and CBHM, a harmonic-mean composite of centerline Dice (clDice) and boundary F1 deliberately designed as the harsh foil of DTAF1. When applied to the SpaceNet and Potsdam image sets, we discover two failure modes, which we remedy with additive companion metrics \texttt{cbhm\_soft} (area-weighted, non-collapsing) and DTAF1-Topo (a raster-skeleton APLS connectivity term closing DTAF1's road-breakage blind spot). We then ask the question, can a single model learn to predict point(0D), linear(1D), and polygonal(2D) features, using a loss inspired by each respective metric. We introduce \texttt{PLEM MultiTaskLoss}, which combines a soft tolerance band (DTAF1 analog), a soft-clDice term, a CenterNet-style heatmap for points, and a masked multi-source supervision which lets each dataset only annotate certain features, since each respective dataset does not include all three types of features (SpaceNet has road, building and intersections, Potsdam and SpaceNet6 have buildings only). Point features are \emph{road intersections}, derived from the same labels as the roads and predicted by an independent sigmoid head. Across a 1,033-tile, three-source pro- duction run, the final model reaches \emph{cbhm\_soft} 0.685 on SpaceNet test tiles and road-intersection F1 0.279 at a validation-calibrated threshold. Against a conventionally trained baseline (cross-entropy + Dice, selected on mIoU) on identical data, the two models tie on mIoU (0.570 vs. 0.572) while every PLEM metric favours the joint loss (cbhm\_soft +0.038, intersection F1 0.279 vs. 0.218): the joint loss’s gains in road connectivity, boundary accuracy and junction detection are invisible to pixel IoU. We also make four discoveries throughout the six development runs behind this model. A point channel in the softmax takes over road and building pixels. An earlier point class of trees and cars, from Potsdam, could not be learned at all. The heatmap negative-term normalization varies between 30x over-detection and almost none until the threshold is calibrated properly. Finally, 36\% of SpaceNet road-tile area has no public labels, and had been scored as ''no-building''.
 \end{abstract}
 
 \begin{CCSXML}

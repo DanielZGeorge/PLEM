@@ -2,16 +2,18 @@
 \label{sec:implementation}
 
 \begin{itemize}
-  \item All \texttt{metrics/}/\texttt{datasets/} inputs/outputs are plain NumPy $H\times W$
-    \texttt{uint8} arrays --- no framework lock-in. \texttt{losses/} (Section~\ref{sec:method}) is
-    the one exception by design: it is pure \texttt{torch}, batched-tensor, differentiable, and
-    deliberately kept in its own top-level package rather than inside \texttt{metrics/}, whose
-    documented contract (``every public function takes $H\times W$ integer label maps and returns
-    dicts of named scalars'') is non-differentiable by construction --- adding torch code there
-    would silently violate that invariant.
-  \item Every public \texttt{metrics/}/\texttt{datasets/} function returns a \textbf{dict of named
-    scalars}, never a bare float, for logging/inspection; \texttt{PLEMMultiTaskLoss.forward()}
-    follows the same convention on the training side (Section~\ref{subsec:multitask-loss}).
+  \item All inputs and outputs of \texttt{metrics/} and \texttt{datasets/} are plain NumPy
+    $H\times W$ \texttt{uint8} arrays, so neither package is tied to a framework.
+    \texttt{losses/} (Section~\ref{sec:method}) is the one exception by design. It is pure
+    \texttt{torch}, operates on batched tensors and is differentiable, and we keep it in its own
+    top-level package because the documented contract of \texttt{metrics/} (``every public
+    function takes $H\times W$ integer label maps and returns dicts of named scalars'') is
+    non-differentiable by construction, and torch code inside \texttt{metrics/} would silently
+    break that invariant.
+  \item Every public function in \texttt{metrics/} and \texttt{datasets/} returns a dict of named
+    scalars rather than a bare float, which makes results easy to log and inspect, and
+    \texttt{PLEMMultiTaskLoss.forward()} follows the same convention on the training side
+    (Section~\ref{subsec:multitask-loss}).
 \end{itemize}
 
 \begin{table}
@@ -34,12 +36,11 @@
   \end{tabular}
 \end{table}
 
-Package structure/exports note: \texttt{dtaf1\_topo} and
-\texttt{apls}/\texttt{apls\_multiclass}/\texttt{mean\_apls} are re-exported at the
-\texttt{metrics/\_\_init\_\_.py} top level, and \texttt{evaluate\_all()} computes
-\texttt{dtaf1\_topo} (skipping APLS when no linear class is requested); \texttt{cbhm\_soft} exists
-only as a dict key inside \texttt{cbhm()}'s return, not a separate function.
-\texttt{losses/\_\_init\_\_.py} re-exports all five public classes (\texttt{ToleranceBandLoss},
+\texttt{dtaf1\_topo} and \texttt{apls}, \texttt{apls\_multiclass} and \texttt{mean\_apls} are
+re-exported at the top level of \texttt{metrics/\_\_init\_\_.py}, and \texttt{evaluate\_all()}
+computes \texttt{dtaf1\_topo}, skipping APLS when no linear class is requested.
+\texttt{cbhm\_soft} is a key in the dict that \texttt{cbhm()} returns, not a separate function.
+\texttt{losses/\_\_init\_\_.py} re-exports all six public classes (\texttt{ToleranceBandLoss},
 \texttt{SoftBoundaryLoss}, \texttt{SoftClDiceLoss}, \texttt{PointHeatmapLoss},
-\texttt{PLEMMultiTaskLoss}). Building-tile extents are read with one HTTP Range request per tile
-(the first 64\,KB of each GeoTIFF), not by downloading the imagery.
+\texttt{PLEMMultiTaskLoss} and the baseline's \texttt{ConventionalSegLoss}). Building-tile extents are read with one HTTP Range request per tile,
+covering the first 64\,KB of each GeoTIFF, so the imagery itself does not have to be downloaded.
