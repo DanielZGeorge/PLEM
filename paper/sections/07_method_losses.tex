@@ -8,7 +8,7 @@ clDice on \texttt{skimage.morphology.skeletonize}, and point F1 on
 autograd, so none of them can serve directly as a training loss. This section introduces
 \texttt{losses/}, a separate top-level package of differentiable training losses written in pure
 \texttt{torch} alongside \texttt{metrics/} and \texttt{datasets/}. Each loss is an analog of one
-primitive from Section~\ref{sec:evalprotocol}, mirroring it in spirit without sharing code, since
+metric from Section~\ref{sec:evalprotocol}, mirroring it in spirit without sharing code, since
 numpy and scipy code cannot share an implementation with torch tensors inside an autograd graph.
 With these losses one model can learn point (0D), linear (1D) and polygonal (2D) features jointly.
 
@@ -30,18 +30,19 @@ make it differentiable.
     \midrule
     DTAF1 (\S\ref{subsec:dtaf1}) & \texttt{ToleranceBandLoss} (\S\ref{subsec:tolerance-loss}) &
       The ground-truth dilation by the tolerance radius is precomputed once per batch, since the
-      ground truth is a fixed target and not a model output. The harder recall direction, which
-      needs an EDT of the prediction on the evaluation side, is made differentiable by
-      soft-dilating the model's own continuous probability map with iterated max-pooling instead
-      of a detached hard threshold. Precision and recall both stay fully differentiable, with no
+      ground truth is a fixed target and not a model output. Recall, the share of ground-truth
+      pixels within the tolerance radius of some predicted pixel, is harder: the evaluation side
+      gets it from a Euclidean distance transform (EDT) of the hard predicted mask, which has no
+      gradient. The loss instead soft-dilates the model's continuous probability map with
+      iterated max-pooling. Precision and recall both stay fully differentiable, with no
       stop-gradient approximation on either term. \\
     Boundary F1 (\S\ref{subsec:bf}) & \texttt{SoftBoundaryLoss} (\S\ref{subsec:boundary-loss}) &
       The soft boundary map is the morphological gradient $\mathrm{dilate}(x) - \mathrm{erode}(x)$,
       which saturates to exactly 1.0 at a hard edge. We tried and rejected an earlier
       $|x-\mathrm{avgpool}(x)|$ formulation, whose peak response is well below 1.0 and silently
-      caps the achievable recall even under perfect alignment. The term applies
-      \texttt{ToleranceBandLoss}'s precision/recall primitive to this soft boundary map instead of
-      the full class mask. \\
+      caps the achievable recall even under perfect alignment. The term computes the
+      same soft tolerance-band precision and recall as \texttt{ToleranceBandLoss}, but on this soft
+      boundary map instead of the full class mask. \\
     clDice (\S\ref{subsec:cldice}) & \texttt{SoftClDiceLoss} (\S\ref{subsec:cldice-loss}) &
       The soft-skeletonization of \citet{shit2021cldice}: iterated soft erosion and soft opening by max- and
       min-pooling, applied directly to the probability map with no discrete
@@ -105,7 +106,7 @@ def soft_tolerance_pair_loss(pred_soft, gt_hard, radius, eps=1e-6, precision_wei
 \subsection{Soft Boundary Loss (Boundary F1 Analog)}
 \label{subsec:boundary-loss}
 
-The soft boundary map uses the same soft erosion and dilation primitives that
+The soft boundary map uses the same soft erosion and dilation operations that
 Section~\ref{subsec:cldice-loss} introduces for soft-skeletonization:
 $\mathrm{boundary}(x) = \mathrm{dilate}(x) - \mathrm{erode}(x)$, the morphological gradient, which
 is $0$ in flat interior and exterior regions and saturates to exactly $1.0$ at a hard, confident

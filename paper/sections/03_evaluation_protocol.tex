@@ -20,8 +20,9 @@ $P_c, G_c$ is empty the score is $0.0$ (total failure).
 \subsection{DTAF1 --- Distance-Tolerant, per-class F1}
 \label{subsec:dtaf1}
 
-DTAF1 matches pixels within a tolerance radius using Euclidean distance transforms
-(\texttt{scipy.ndimage.distance\_transform\_edt}):
+DTAF1 matches pixels within a tolerance radius using the Euclidean distance transform (EDT,
+\texttt{scipy.ndimage.distance\_transform\_edt}). $\mathrm{EDT}(1-M)(x)$ is the distance from pixel
+$x$ to the nearest pixel of mask $M$:
 \begin{align}
   \mathrm{TP}_{\mathrm{pred}} &= |\{x \in P_c : \mathrm{EDT}(1-G_c)(x) \le d_c\}| \\
   \mathrm{TP}_{\mathrm{gt}}   &= |\{x \in G_c : \mathrm{EDT}(1-P_c)(x) \le d_c\}| \\
@@ -49,7 +50,7 @@ f1 = (2 * precision * recall / (precision + recall)
       if (precision + recall) > 0 else 0.0)
 \end{lstlisting}
 
-The default tolerances are \texttt{DEFAULT\_TOLERANCES = \{"road": 10, "building": 2\}} in pixels
+The default tolerances (\texttt{DEFAULT\_TOLERANCES}) are 10\,px for roads and 2\,px for buildings
 (Section~\ref{subsec:tolerance-radii} explains how they were chosen). The function signature is
 \texttt{dtaf1(pred, gt, class\_config, reduction="macro") -> dict}, and it returns \texttt{dtaf1},
 \texttt{dtaf1\_macro}, \texttt{dtaf1\_weighted} and \texttt{per\_class}. DTAF1 applies the
@@ -87,9 +88,9 @@ Sections~\ref{subsec:cldice-loss} and~\ref{sec:discussion}.
 where $B_p = \mathrm{boundary}(P_c)$ and $B_g = \mathrm{boundary}(G_c)$ are extracted
 morphologically. The same module provides \texttt{iou()}, the pixel-overlap baseline we compare
 against throughout Sections~\ref{sec:motivation} and~\ref{sec:expsetup}. The
-\texttt{SoftBoundaryLoss} of Section~\ref{subsec:boundary-loss} applies the precision/recall
-primitive of Section~\ref{subsec:tolerance-loss} to a soft boundary map instead of the full class
-mask.
+\texttt{SoftBoundaryLoss} of Section~\ref{subsec:boundary-loss} computes the same soft
+tolerance-band precision and recall as \texttt{ToleranceBandLoss}
+(Section~\ref{subsec:tolerance-loss}), but on a soft boundary map instead of the full class mask.
 
 \subsection{Point F1 --- Hungarian Instance Matching}
 \label{subsec:pointf1}

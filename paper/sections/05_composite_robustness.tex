@@ -24,11 +24,7 @@ small that class's share of the scene.
 where $w_{\mathrm{linear}} = N_{\mathrm{linear}} / (N_{\mathrm{linear}} + N_{\mathrm{polygon}})$
 is each type's share of the total ground-truth pixels (0.5/0.5 if both totals are 0).
 
-\begin{lstlisting}[language=Python, caption={\texttt{metrics/unified.py:88-102}}]
-cl_mean_weighted = (float(np.dot(cldice_weights, cldice_scores) / cl_total)
-                     if cl_total > 0 else 0.0)
-bf_mean_weighted = (float(np.dot(bf_weights, bf_scores) / bf_total)
-                     if bf_total > 0 else 0.0)
+\begin{lstlisting}[language=Python, float=tp, caption={Type weights and \texttt{cbhm\_soft}, \texttt{metrics/unified.py:109-116}}]
 type_total = cl_total + bf_total
 w_cl = float(cl_total / type_total) if type_total > 0 else 0.5
 w_bf = float(bf_total / type_total) if type_total > 0 else 0.5
@@ -55,8 +51,8 @@ dominate by pixel count, the recovery is clean: $\mathrm{cbhm}$ $0.48$--$0.52 \t
 \subsection{Choosing Per-Class Tolerance Radii}
 \label{subsec:tolerance-radii}
 
-We validated \texttt{DEFAULT\_TOLERANCES = \{"road": 10, "building": 2\}} (pixels) against the
-offset and erosion sweeps of Section~\ref{subsec:motivation-results}. The road offset sweep shows
+We validated the default tolerances, 10\,px for roads and 2\,px for buildings
+(\texttt{DEFAULT\_TOLERANCES}), against the offset and erosion sweeps of Section~\ref{subsec:motivation-results}. The road offset sweep shows
 DTAF1 holding at $1.000$ up to exactly the 10px boundary and softening immediately past it, so the
 tolerance neither rejects correct predictions nor lets everything pass. The sweep is a cheap
 stand-in for re-annotating real data at every candidate tolerance. PLEM's tolerances are fixed,

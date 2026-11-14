@@ -368,8 +368,10 @@ SpaceNet6 is the extreme case. mIoU is level (0.477 against 0.480) and both mode
 IoU (0.023 against 0.037), yet BF and \texttt{cbhm} are 0.071 against 0.350. The baseline predicts
 almost no buildings on SAR (148K pixels over 43 tiles, with 4 tiles empty), while the joint model
 predicts buildings on every tile (521K pixels), placed near the ground-truth boundaries but barely
-overlapping them. We suspect SAR layover, which displaces building returns from their footprints,
-but have not verified it. This is evidence that the joint model finds SAR buildings that pixel
+overlapping them. We suspect layover: a side-looking radar places each return by its distance
+from the sensor, and a building's roof and upper walls are closer to the sensor than its base, so
+in the SAR image they appear shifted toward the sensor, onto the ground in front of the true
+footprint. We have not verified this. This is evidence that the joint model finds SAR buildings that pixel
 overlap does not credit; it does not show that either model is a good SAR building detector.
 
 \textbf{Loss claim: supported on SpaceNet and SpaceNet6, not on Potsdam.} On SpaceNet the joint
