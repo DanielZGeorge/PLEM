@@ -86,7 +86,7 @@ Where along the dropout axis the blend departs from plain DTAF1 has no closed fo
 Table~\ref{tab:breakage-topo} shows \texttt{dtaf1\_topo} tracking \texttt{road\_apls} closely, with
 both driven close to zero by dropout fractions of 0.5--0.7, while \texttt{dtaf1} stays at $1.000$
 throughout; \texttt{tests/test\_metrics\_sanity.py::\allowbreak{}TestRoadBreakageRegression} asserts
-this. The sweep is synthetic, and Section~\ref{sec:discussion} gives the real-data status.
+this. The same pattern holds on 50 real SpaceNet tiles (Table~\ref{tab:realdata-breakage}).
 
 \noindent\textbf{Bridge to Section~\ref{sec:method}.} Offset tolerance (Section~\ref{subsec:dtaf1}),
 width insensitivity (Section~\ref{subsec:cldice}), connectivity (this section) and instance-level

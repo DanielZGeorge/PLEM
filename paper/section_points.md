@@ -372,11 +372,15 @@ text.
 - Points to §4 and §6, which hold these results. Could be dropped or merged.
 
 ### 10.2 Real-data case studies
-- **Blind spot on real data.** On 24 real tiles, 75% road dropout leaves DTAF1 at 1.000 while
-  CBHM falls to about 0.57. `dtaf1_weighted` does not fix it.
-- **Sparse-class collapse.** `Khartoum_img371` and `Khartoum_img333` (see §5.2).
-- **Aggregate.** `cbhm` → `cbhm_soft`: offset at 16 px 0.669 → 0.712; dropout at 75%
-  0.568 → 0.646.
+- **Blind spot on real data, and the fix** (`tab:realdata-breakage`, 50 Vegas + Khartoum tiles,
+  `notebooks/real_data_dtaf1_topo.ipynb`). At 75% road dropout `dtaf1` 1.000, `cbhm` 0.572,
+  clDice 0.400, `dtaf1_topo` 0.501 (road APLS 0.001; 0.50 is the floor with buildings untouched).
+  Offset: `dtaf1_topo` ≥ 0.996 up to 8 px, 0.792 at 12 px.
+- **Sparse-class collapse.** `Khartoum_img371` (road 0.06%): a 12 px offset gives `cbhm` 0,
+  `dtaf1` 0.934, `cbhm_soft` 0.592 (= building pixel share); `dtaf1_topo` 0.500 there too.
+  `Khartoum_img333`: `cbhm` 0.45–0.52 → `cbhm_soft` 0.89–0.90.
+- **Aggregate.** `cbhm` → `cbhm_soft`: offset at 16 px 0.720 → 0.787; dropout at 75%
+  0.572 → 0.707. No exact-zero collapse elsewhere in the sample.
 - **Points (Potsdam).**
   - dropout: precision stays at 1, recall falls linearly;
   - clutter: precision falls to 0.13 at 20 spurious blobs;

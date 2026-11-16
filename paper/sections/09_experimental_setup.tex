@@ -12,18 +12,17 @@ nine sweep functions of \texttt{tests/test\_sensitivity.py} listed in Table~\ref
 \label{subsec:realdata-setup}
 
 The real-data sample combines SpaceNet SN2 (buildings, $650\times650$px) and SN3 (roads,
-$1300\times1300$px) tiles from the public, unauthenticated S3 bucket, curated to up to
-${\sim}100$ tiles over Vegas, Khartoum, Paris and Shanghai. A 1300px road tile spans a $2\times2$
-block of 650px building tiles. This curated sample reconciled the two tiling grids with a
-coarse-then-dense nearest-neighbor search over tile ids. The production pipeline
-(Section~\ref{subsec:scaled-setup}) replaced that search with an exact index of every building
-tile's extent, after we found that the approximate search silently missed overlapping tiles. For
-the point class (trees) we added 15 crops of ISPRS Potsdam (6cm/px) \cite{isprs-potsdam} from a
+$1300\times1300$px) tiles from the public, unauthenticated S3 bucket. A 1300px road tile spans a
+$2\times2$ block of 650px building tiles, matched through an exact index of every building tile's
+extent (Section~\ref{subsec:scaled-setup}). The perturbation study uses 50 tiles (25 each from
+Vegas and Khartoum, drawn with a fixed seed), plus two Khartoum tiles cached separately as case
+studies. For the point class (trees) we added 15 crops of ISPRS Potsdam (6cm/px) \cite{isprs-potsdam} from a
 Kaggle mirror, thresholded by palette color and labeled by connected components.
 
 No trained extractor was available for most of this evaluation, so the ``prediction'' is real
 ground truth run through the same perturbation families as the synthetic sweeps
-(\texttt{notebooks/real\_data\_evaluation.ipynb}) at fixed severities: \texttt{road\_offset}
+(\texttt{notebooks/real\_data\_dtaf1\_topo.ipynb} for roads and buildings,
+\texttt{notebooks/real\_data\_evaluation.ipynb} for points) at fixed severities: \texttt{road\_offset}
 $\in\{0,4,8,12,16\}$px, \texttt{road\_dropout}$\in\{0,25,50,75\}\%$,
 \texttt{road\_thicken}$\in\{0,2,4,6\}$px, \texttt{building\_erode}$\in\{0,1,2,3\}$px,
 \texttt{point\_jitter}$\in\{0,3,6,10,15\}$px, \texttt{point\_dropout}$\in\{0,25,50,75,100\}\%$ and

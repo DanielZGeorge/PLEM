@@ -4,15 +4,10 @@
 \subsection{Evaluation-Library Limitations}
 
 \begin{itemize}
-  \item DTAF1-Topo (Section~\ref{subsec:dtaf1topo}) fixes DTAF1's road-breakage blind spot
-    (Sections~\ref{subsec:motivation-results}, \ref{subsec:blindspot}). It is now part of
-    \texttt{evaluate\_all()} and has been run on a trained model's real test output
-    (Section~\ref{subsec:scaled-results}: SpaceNet \texttt{dtaf1\_topo} 0.482 against
-    \texttt{dtaf1} 0.771), but it has still not been re-run on the 24-tile perturbation sample of
-    Section~\ref{subsec:realdata-results}.
-  \item \texttt{cbhm\_soft} (Section~\ref{subsec:weighted-reduction}) only helps when the failing
-    class is also the minority by pixel count. When a class that is sparse by area is not sparse by
-    pixel count, as on \texttt{Khartoum\_img371}, the fix is partial.
+  \item \texttt{cbhm\_soft} (Section~\ref{subsec:weighted-reduction}) recovers a collapsed score
+    only by the surviving class's share of ground-truth pixels. When the failing class is not a
+    small minority by pixel count, as on \texttt{Khartoum\_img371} (road 41\% of labelled pixels,
+    \texttt{cbhm\_soft} 0.592), the fix is partial.
   \item clDice is brittle on short or sparse real road segments, where moderate offsets can
     collapse it to exactly 0 while DTAF1 degrades gracefully. Neither composite is uniformly more
     trustworthy, so \texttt{cbhm}, \texttt{cbhm\_soft}, \texttt{dtaf1} and
@@ -28,8 +23,10 @@
     geometric noding on 11 of 12 sampled tiles, but we did not audit it at scale.
   \item The harmonic blend of Section~\ref{subsec:dtaf1topo} can only pull a score down toward
     APLS, never up. We intended this asymmetry, but it means DTAF1-Topo inherits every failure mode
-    of APLS itself, such as a correct but very short or sparse road segment with too few sampled
-    control-point pairs, and we have not yet characterized these empirically.
+    of APLS itself. On real tiles we have seen one: a short, sparse road shifted just past the
+    10\,px snap radius gets road APLS 0 (\texttt{Khartoum\_img371},
+    Section~\ref{subsec:realdata-results}), the same brittleness clDice shows there. How often
+    this happens on model output has not been measured.
 \end{itemize}
 
 \subsection{Training-Loss Limitations}

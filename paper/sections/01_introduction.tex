@@ -72,9 +72,9 @@ This paper makes nine contributions:
     annotate different features supervise one model, since no single source annotates every
     feature type (SpaceNet has roads, buildings and road intersections, while Potsdam and
     SpaceNet6 have buildings only), and an independent sigmoid point head keeps point supervision
-    out of the segmentation softmax. We validate the loss with controlled synthetic ablations, a
-    small joint-training run on 153 real tiles and a production-scale joint-training pipeline on
-    1,033 tiles from three sources (Sections~\ref{sec:expsetup}--\ref{sec:results}).
+    out of the segmentation softmax. We validate the loss with controlled synthetic ablations and a
+    production-scale joint-training pipeline on 1,033 tiles from three sources
+    (Sections~\ref{sec:expsetup}--\ref{sec:results}).
   \item \textbf{DTAF1} (Section~\ref{sec:evalprotocol}), a tolerance-radius F1 that scores linear and polygonal classes with one formula and one code path, so scoring a
     newly added feature type only needs a configuration change.
   \item \textbf{CBHM} (Section~\ref{sec:evalprotocol}), a harmonic mean of clDice and boundary F1
@@ -88,7 +88,8 @@ This paper makes nine contributions:
     because the model predicts a road mask rather than a graph, so there is no predicted vector
     graph to compare; and \textbf{DTAF1-Topo} (Section~\ref{sec:topological}), which folds this
     connectivity term into DTAF1 and closes the road-breakage blind spot shown in
-    Table~\ref{tab:failure-modes}.
+    Table~\ref{tab:failure-modes}. On 50 real SpaceNet tiles with 75\% of road pixels deleted,
+    DTAF1 still reads 1.000 while road APLS falls to 0.001 (Section~\ref{subsec:realdata-results}).
   \item \textbf{\texttt{point\_f1}} (Section~\ref{sec:evalprotocol}), a point-feature metric that
     matches instances with the Hungarian algorithm rather than greedy nearest-neighbor
     assignment, which avoids a specific adversarial failure mode. We apply it to road
@@ -96,11 +97,11 @@ This paper makes nine contributions:
     point and road ground truth come from one annotation of the same image and cannot disagree.
   \item Empirical validation (Sections~\ref{sec:expsetup}--\ref{sec:results}) covering nine
     synthetic sensitivity sweeps of the evaluation metrics, seven synthetic loss-ablation sweeps,
-    a curated real-data sample from SpaceNet (four cities) and ISPRS Potsdam, and three
-    trained-model pipelines scored end to end with the library.
+    perturbation studies on 50 real SpaceNet tiles and 15 ISPRS Potsdam crops, and a trained
+    production model and baseline scored end to end with the library.
   \item \textbf{A production-scale validation and development record}
     (Sections~\ref{subsec:scaled-setup},~\ref{subsec:scaled-results}): a 1,033-tile, three-source
-    pipeline trained six times for 40 epochs on cloud GPUs. Each run exposed one concrete failure
+    pipeline trained six times, for up to 40 epochs, on cloud GPUs. Each run exposed one concrete failure
     mode, which we traced to its cause and fixed in code: an unreachable heatmap target, a
     mis-normalized negative term, a point channel flooding the segmentation softmax, an
     unlearnable point label, a negative-term normalization that swung between over- and

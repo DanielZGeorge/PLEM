@@ -11,22 +11,51 @@ computed directly with the library.
 \subsection{Real-Data Case Studies}
 \label{subsec:realdata-results}
 
+\begin{table}
+  \caption{Road breakage on 50 real SpaceNet tiles (25 Vegas, 25 Khartoum): random deletion of
+  road pixels, means over tiles. Buildings are untouched, so 0.50 is the floor of the two-class
+  \texttt{dtaf1\_topo} macro average.}
+  \label{tab:realdata-breakage}
+  \small
+  \begin{tabular}{@{}lccccc@{}}
+    \toprule
+    Road px deleted & \texttt{dtaf1} & \texttt{dtaf1\_topo} & road APLS & clDice & \texttt{cbhm} \\
+    \midrule
+    0\%  & 1.000 & 1.000 & 1.000 & 1.000 & 1.000 \\
+    25\% & 1.000 & 0.987 & 0.950 & 0.857 & 0.923 \\
+    50\% & 1.000 & 0.622 & 0.147 & 0.666 & 0.799 \\
+    75\% & 1.000 & 0.501 & 0.001 & 0.400 & 0.572 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The ``predictions'' here are real ground truth run through the perturbations of
+Section~\ref{subsec:realdata-setup} (\texttt{notebooks/real\_data\_dtaf1\_topo.ipynb}).
+
 \begin{itemize}
-  \item \textbf{Finding 1: DTAF1's blind spot on real data.} Averaged over 24 real SpaceNet tiles
-    (Vegas and Khartoum), deleting 75\% of road pixels leaves plain DTAF1 at $1.000$, while CBHM
-    collapses to ${\sim}0.57$ as \texttt{cldice\_mean} falls to ${\sim}0.40$.
-    \texttt{dtaf1\_weighted} does not fix this and also stays at 1.000, since area-weighting only
-    changes how per-class scores are combined, not the per-pixel tolerance matching within a
-    class. \texttt{dtaf1\_topo} has not yet been run on this sample
-    (Section~\ref{sec:discussion}).
+  \item \textbf{Finding 1: DTAF1-Topo closes DTAF1's blind spot on real data}
+    (Table~\ref{tab:realdata-breakage}). Deleting 75\% of road pixels leaves \texttt{dtaf1} and
+    \texttt{dtaf1\_weighted} at $1.000$, because the surviving pixels still lie within 10\,px of
+    the ground truth, while CBHM falls to 0.572 as clDice falls to 0.400. \texttt{dtaf1\_topo}
+    falls with the dropout, to 0.622 at 50\% and 0.501 at 75\%, as road APLS goes to 0.147 and
+    then 0.001: at 75\% the road term has collapsed completely, and only the untouched building
+    class keeps the average at 0.50. Under road offset, which APLS tolerates through its 10\,px snap
+    radius, \texttt{dtaf1\_topo} stays within 0.004 of 1 up to 8\,px; past the tolerance, at 12\,px,
+    it reads 0.792 against \texttt{dtaf1}'s 0.983.
   \item \textbf{Finding 2: CBHM's sparse-class collapse} (Section~\ref{subsec:weighted-reduction}).
-    On \texttt{Khartoum\_img371} a 12px road offset gives $\mathrm{cbhm}=0.000$ against
-    $\mathrm{dtaf1}=0.934$, and \texttt{cbhm\_soft} recovers only to $0.285$. On
-    \texttt{Khartoum\_img333}, where the building dominates by pixel count, it recovers cleanly
-    ($\mathrm{cbhm}$ $0.48$--$0.52 \to \mathrm{cbhm\_soft}$ $0.85$).
-  \item \textbf{Aggregate over all 24 tiles.} \texttt{road\_offset} at 16px moves
-    $\mathrm{cbhm}\ 0.669 \to \mathrm{cbhm\_soft}\ 0.712$, and \texttt{road\_dropout} at 0.75 moves
-    $\mathrm{cbhm}\ 0.568 \to \mathrm{cbhm\_soft}\ 0.646$.
+    On \texttt{Khartoum\_img371}, where the road covers 0.06\% of the tile, a 12\,px road offset
+    gives $\mathrm{cbhm}=0.000$ against $\mathrm{dtaf1}=0.934$, because clDice of the sparse,
+    shifted road is exactly 0. \texttt{cbhm\_soft} recovers to 0.592, which is exactly the
+    building's share of ground-truth pixels (1,529 of 2,581). On \texttt{Khartoum\_img333}, where
+    building pixels outnumber road pixels 5.6 to 1, offsets of 8--16\,px give \texttt{cbhm}
+    0.45--0.52 and \texttt{cbhm\_soft} 0.89--0.90. On \texttt{Khartoum\_img371},
+    \texttt{dtaf1\_topo} also falls to 0.500 at 12\,px (road APLS 0): once the shift exceeds the
+    snap radius, no control point on the short road can be matched, the APLS failure mode on
+    sparse roads that Section~\ref{sec:discussion} lists.
+  \item \textbf{Aggregate over all 50 tiles.} \texttt{road\_offset} at 16\,px moves
+    $\mathrm{cbhm}\ 0.720 \to \mathrm{cbhm\_soft}\ 0.787$, and \texttt{road\_dropout} at 75\% moves
+    $\mathrm{cbhm}\ 0.572 \to \mathrm{cbhm\_soft}\ 0.707$. No tile in the sample shows the
+    exact-zero collapse of \texttt{Khartoum\_img371} under any offset.
   \item \textbf{Point features on 15 Potsdam crops.} Under \texttt{point\_dropout}, precision stays
     flat at 1.000 while recall falls linearly to 0. Under \texttt{point\_clutter}, recall stays
     flat at 1.000 while precision falls $1.0 \to 0.36 \to 0.13$ at 5 and 20 spurious blobs. Under
@@ -205,7 +234,7 @@ Table~\ref{tab:scaled-test} exactly.
     Potsdam (30)  & conventional & 0.742 & 0.509 & ---   & 0.455 & 0.573 & 0.564 & 0.564 & --- & --- & 0.573 \\
                   & joint loss   & 0.708 & 0.478 & ---   & 0.400 & 0.568 & 0.559 & 0.559 & --- & --- & 0.568 \\
     SpaceNet6 (43) & conventional & 0.931 & 0.477 & ---  & 0.023 & 0.071 & 0.063 & 0.063 & --- & --- & 0.071 \\
-                   & joint loss   & 0.923 & 0.480 & ---  & 0.037 & \textbf{0.350} & 0.300 & 0.300 & --- & --- & 0.350 \\
+                   & joint loss   & 0.923 & 0.480 & ---  & 0.037 & \textbf{0.350} & \textbf{0.300} & \textbf{0.300} & --- & --- & 0.350 \\
     \bottomrule
   \end{tabular}
 \end{table*}
@@ -226,6 +255,28 @@ Table~\ref{tab:scaled-test} exactly.
   \end{tabular}
 \end{table}
 
+\begin{figure*}
+  \includegraphics[width=\textwidth]{figures/qualitative_baseline_vs_joint.png}
+  \Description{A three-by-three grid of satellite tiles. Rows are SpaceNet test tiles Vegas
+  img1407, Vegas img1505 and Shanghai img1166; columns are ground truth, the conventional model and
+  the joint-loss model. Roads are drawn in orange, buildings in blue, ground-truth intersections as
+  white rings and predicted intersections as yellow squares; areas without building labels are
+  greyed. In every row the joint model's roads are more continuous than the conventional model's,
+  which breaks roads into short pieces, and the per-panel scores show mIoU level or favouring the
+  conventional model while DTAF1-Topo, APLS and intersection F1 favour the joint model.}
+  \caption{Test tiles where mIoU and PLEM's metrics disagree, chosen for that reason and not
+  representative of the whole test set. Orange: road; blue: building; white rings: ground-truth
+  intersections; yellow squares: predicted intersections (each model at its validation-calibrated
+  threshold); grey: no building labels (not scored). Each panel lists that model's per-tile mIoU,
+  DTAF1-Topo, road APLS and intersection F1 (matched/real). \texttt{Vegas\_img1407}: the
+  conventional model wins by mIoU ($0.681$ against $0.592$), almost entirely through building IoU
+  on the large warehouse roof, while its parking-lot roads break into fragments (APLS $0.059$
+  against $0.263$). \texttt{Vegas\_img1505} and \texttt{Shanghai\_img1166}: mIoU is level, but the
+  conventional model's roads are broken into short pieces and it finds 3 of 36 intersections on
+  \texttt{Shanghai\_img1166} against the joint model's 12.}
+  \label{fig:qualitative}
+\end{figure*}
+
 \textbf{Metric claim: supported.} On SpaceNet the conventional metrics call the two models a tie.
 The paired mIoU difference is $+0.002$ (95\% CI $-0.004$ to $+0.008$, $p = 0.64$), and pixel
 accuracy is 0.003 lower for the joint model. Every PLEM metric separates them, with confidence
@@ -236,7 +287,7 @@ IoU $-0.026$. On buildings, IoU and BF point in opposite directions: the joint m
 overlap the ground truth less but have better-placed boundaries. Tile by tile, the mIoU and
 \texttt{dtaf1\_topo} differences have opposite signs on 30 of 83 tiles (23 of 83 for
 \texttt{cbhm}), and the largest case, \texttt{Vegas\_img1407}, loses 0.088 mIoU while gaining 0.109
-\texttt{dtaf1\_topo} (APLS $+0.20$). Within either model, Kendall's $\tau$ between per-tile mIoU and
+\texttt{dtaf1\_topo} (APLS $+0.20$; Figure~\ref{fig:qualitative}). Within either model, Kendall's $\tau$ between per-tile mIoU and
 the PLEM segmentation metrics is 0.47--0.80, and only 0.30 for intersection F1. The gap is starkest
 for intersections (Table~\ref{tab:baseline-points}): pixel IoU of the intersection squares is
 0.01--0.03 for every model and threshold and does not track detection quality, which ranges from F1

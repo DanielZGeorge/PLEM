@@ -37,16 +37,16 @@ since a geometric mean also collapses to exactly 0 whenever one input is 0
 (Appendix~\ref{app:proofs}, Sections~\ref{app:a3}--\ref{app:a4}).
 
 \textbf{Worked example.} The real failure that motivated this fix came from SpaceNet imagery
-(\texttt{composite\_vs\_submetric\_report.ipynb}, tile \texttt{Khartoum\_img371}). A 12px road
-offset gave $\mathrm{cbhm}=0.000$ despite $\mathrm{dtaf1}=0.934$ (per-class road F1 $=0.867$,
-precision $=0.872$, recall $=0.863$). The road covers only ${\sim}0.1\%$ of the image's pixels, and
-clDice collapsed entirely on this sparse, offset road, which dragged the harmonic mean to exactly
-zero even though the dominant building class was essentially perfect. \texttt{cbhm\_soft} recovers
-only partially here ($0.000 \to 0.285$), because the road has more ground-truth pixels than the
-building despite its tiny share of the image area, and area-weighting only helps when the failing
-class is also the minority by pixel count. On \texttt{Khartoum\_img333}, where the building does
-dominate by pixel count, the recovery is clean: $\mathrm{cbhm}$ $0.48$--$0.52 \to
-\mathrm{cbhm\_soft}$ $0.85$. Section~\ref{sec:discussion} returns to this limitation.
+(tile \texttt{Khartoum\_img371}, Section~\ref{subsec:realdata-results}). A 12px road offset gives
+$\mathrm{cbhm}=0.000$ despite $\mathrm{dtaf1}=0.934$. The road covers only 0.06\% of the tile,
+and clDice collapses entirely on this sparse, offset road, which drags the harmonic mean to exactly
+zero even though the building class is untouched. \texttt{cbhm\_soft} recovers to $0.592$, the
+building's share of the tile's ground-truth pixels (1,529 of 2,581), so the recovery is only as
+large as the surviving class's pixel share. On \texttt{Khartoum\_img333}, where building pixels
+outnumber road pixels 5.6 to 1, the recovery is larger: $\mathrm{cbhm}$ $0.45$--$0.52 \to
+\mathrm{cbhm\_soft}$ $0.89$--$0.90$. Area-weighting therefore helps only to the extent that the
+failing class is the minority by pixel count; Section~\ref{sec:discussion} returns to this
+limitation.
 
 \subsection{Choosing Per-Class Tolerance Radii}
 \label{subsec:tolerance-radii}

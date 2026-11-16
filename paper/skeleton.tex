@@ -302,7 +302,14 @@ evaluation.}
 
 \subsection{Real-Data Case Studies}
 \label{subsec:realdata-results}
-\tbd{}
+
+\begin{table}
+  \caption{Road breakage on 50 real SpaceNet tiles.}
+  \label{tab:realdata-breakage}
+  %% Columns: Road px deleted | dtaf1 | dtaf1_topo | road APLS | clDice | cbhm
+\end{table}
+
+\tbd{Findings 1 and 2; aggregate; Potsdam points.}
 
 \subsection{Loss Ablation Results}
 \label{subsec:lossablation-results}
@@ -343,6 +350,13 @@ evaluation.}
 
 \subsection{Conventional Baseline vs.\ the Joint Loss}
 \label{subsec:baseline-results}
+
+\begin{figure*}
+  \includegraphics[width=\textwidth]{figures/qualitative_baseline_vs_joint.png}
+  \Description{Ground truth, conventional and joint predictions on three SpaceNet test tiles.}
+  \caption{Test tiles where mIoU and PLEM's metrics disagree.}
+  \label{fig:qualitative}
+\end{figure*}
 
 \begin{table*}
   \caption{Conventional (CE+Dice, mIoU-selected) vs.\ joint-loss model on the same test tiles.}

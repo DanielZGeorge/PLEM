@@ -104,8 +104,9 @@ forward the same way — see `CLAUDE.md`'s `paper/` entry for how this round was
 tracked `results/scaled/plem_history.csv` and `baseline_history.csv`. The two older PNGs from
 `notebooks/train_unet_joint.ipynb` (2-epoch loss curves and qualitative panels without points)
 were removed in November 2026 together with the old §10.3/§10.5, on review: the paper now keeps
-only the matched baseline comparison. A production-model qualitative figure with intersections
-(baseline vs. joint) is planned and needs test imagery from CARC's `data/`.
+only the matched baseline comparison. `figures/qualitative_baseline_vs_joint.png` (§10.5) shows
+the conventional and joint models on three SpaceNet test tiles, with intersections. Every figure's
+script and command is in `figures/src/`.
 
 ## Placeholder content still to fill in
 
